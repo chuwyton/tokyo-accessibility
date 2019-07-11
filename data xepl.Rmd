@@ -1,0 +1,117 @@
+---
+title: "Explore MLIT attraction data"
+output: html_notebook
+---
+This file is to explore what's up with the MLIT attraction data, and whether it fits our usage.
+
+
+```{r Load libraries}
+library(tidyverse)
+library(sf)
+library(kokudosuuchi)
+library(tmap)
+library(osmdata)
+
+oldLocale = Sys.getlocale("LC_CTYPE")
+Sys.setlocale("LC_CTYPE", "japanese")
+Sys.setlocale("LC_CTYPE", oldLocale)
+
+tmap_mode("plot")
+tmap_mode("view")
+```
+
+```{r Load data}
+ksjSummary = getKSJSummary()
+#p12 観光資源
+#Sys.setlocale("LC_CTYPE", oldLocale)
+ksjUrl = getKSJURL(identifier = "P12", prefCode = 13)
+
+#use eng locale
+tokyo_admin = kokudosuuchi::KSJMetadata_code_correspondence_tables$AdminAreaCd.html %>% 
+  as_tibble(rownames = "id") %>% 
+  filter(str_detect(value, "東京都"))
+#use jap locale to view... Tokyo wards is 131xx
+
+attractions = getKSJData(ksjUrl$zipFileUrl, cache_dir = "data/")
+attractions_points = attractions$`P12a-14_13` %>% 
+  filter(str_detect(P12_004, "^131")) %>% #131xx
+  mutate(P12_002e = case_when(P12_001 == 10001 ~ "Chidorigafuchi cherry blossoms",
+                              P12_001 == 10028 ~ "Meiji Shrine",
+                              P12_001 == 10019 ~ "Sensoji/Asakusa Kannon Temple",
+                              P12_001 == 10002 ~ "Edo Castle Ruins",
+                              P12_001 == 10029 ~ "Harajuku",
+                              P12_001 == 10008 ~ "Ginza Dori",
+                              P12_001 == 10009 ~ "Tsukiji Fish Market",
+                              P12_001 == 10013 ~ "Sumida River Bridges",
+                              P12_001 == 10016 ~ "Shinjuku Imperial Garden",
+                              P12_001 == 10010 ~ "Hama Rikyu Garden",
+                              P12_001 == 10026 ~ "Tokyo Skytree",
+                              P12_001 == 10014 ~ "Tokyo Tower",
+                              P12_001 == 10003 ~ "National Diet Building",
+                              P12_001 == 10004 ~ "Tokyo Station",
+                              P12_001 == 10020 ~ "Sanja Festival",
+                              P12_001 == 10021 ~ "Ueno Zoo",
+                              P12_001 == 10022 ~ "Tokyo National Museum",
+                              P12_001 == 10023 ~ "National Museum of Western Art",
+                              P12_001 == 10024 ~ "National Museum of Nature and Science",
+                              P12_001 == 10005 ~ "National Museum of Modern Art",
+                              P12_001 == 10015 ~ "Nezu Museum",
+                              P12_001 == 10012 ~ "Kabuki-za Theatre",
+                              P12_001 == 10027 ~ "Ryogoku Sumo Hall",
+                              P12_001 == 10030 ~ "National Noh Theatre",
+                              P12_001 == 10018 ~ "Suehirotei Vaudeville Theatre",
+                              P12_001 == 10006 ~ "National Theatre of Japan",
+                              P12_001 == 10025 ~ "Suzumoto Entertainment Hall",
+                              P12_001 == 10007 ~ "Hakone Ekiden",
+                              TRUE ~ P12_002),  #Manual Translation
+           P12_005e = case_when(str_detect(P12_005, "公園") ~ "Parks",
+                                str_detect(P12_005, "動植物園") ~ "Zoos, botanical gardens and aquariums",
+                                P12_005 == "年中行事" ~ "Annual events",
+                                str_detect(P12_005, "博物館") ~ "Museums",
+                                P12_005 == "隅田川橋梁群" ~ "Sumida River Bridges",
+                                P12_005 == "郷土景観" ~ "Local Sights",
+                                P12_005 == "銀座通り" ~ "Ginza Dori",
+                                str_detect(P12_005, "神社") ~ "Places of Worship",
+                                P12_005 == "植物" ~ "Nature",
+                                str_detect(P12_005, "城跡") ~ "Castles and Palaces",
+                                P12_005 == "食" ~ "Food",
+                                str_detect(P12_005, "集落") ~ "Towns",
+                                str_detect(P12_005, "芸能") ~ "Performances and events",
+                                P12_005 == "建造物" ~ "Buildings and Architecture",
+                                TRUE ~ P12_005)) %>% # Manual Translation
+  filter(P12_005e != "Food") # Edomae sushi is too general. Seafood at Tsukiji already has Tsukiji.
+
+
+
+tm_shape(attractions_points) + tm_dots("P12_005e", size=0.75, alpha = 0.7)
+
+#Sys.setlocale("LC_CTYPE", "JA")
+
+```
+
+
+```{r Import Yamanote Line}
+q = getbb("Tokyo") %>%
+  opq() %>%
+  add_osm_feature("route", "train") %>%
+  add_osm_feature("name:en", "JR Yamanote Line (Outer)")
+
+yamanote = osmdata_sf(q)
+yamanote_area = yamanote$osm_lines %>%
+  st_union() %>% 
+  st_convex_hull()
+yamanote_area_grid = yamanote_area %>% 
+  st_make_grid(st_bbox(.), square = F, cellsize = 0.004) 
+tm_shape(yamanote_area_grid) + tm_polygons()
+
+tm_shape(yamanote_area) + 
+  tm_polygons(col = "red", alpha = 0.4) +
+  tm_shape(attractions_points) + 
+  tm_dots("P12_005e", size=0.2, alpha = 0.9)
+```
+
+```{r calculate shortest paths}
+
+```
+
+

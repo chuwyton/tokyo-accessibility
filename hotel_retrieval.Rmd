@@ -1,0 +1,412 @@
+---
+title: "Analysing Hotel Prices"
+output:
+  html_document:
+    df_print: paged
+---
+
+ggmap was used in this exploratory script.
+CRS: Japanese Geodetic Datum 2011 (54N). This encompasses Tokyo and is the most precise. EPSG: 6691
+
+```{r Setup, include=F}
+library(tidyverse)
+library(jsonlite)
+library(sf)
+library(ggmap)
+library(tmap) #for exploration
+library(GGally) # for pairs, mostly
+library(osmdata)
+library(opentripplanner)
+library(httr)
+
+tmap_mode("view")
+```
+
+```{r Prefix Suffix definitions, include=F}
+######## SUFFIXES
+### _aggr: the dataset that this variable points to is aggregated.
+```
+
+
+#Non-Spatial Analysis  
+
+We will first look at non-spatial analysis of hotels in Tokyo.
+
+Search condition: 1 - 2 July 2019, 1 adult 1 room.
+```{r Get hotels, eval=F}
+get_hotels = function(path) {
+  test = read_json(path)$hotels %>% keep(~.x$type == "HotelViewModel")
+  test_tibble = tibble(hotelId = map(test, "hotelId") %>% unlist(),
+                       hotelName = map(test, "hotelName") %>% unlist(),
+                       #shortlistModel = map(test, "shortlistModel"),
+                       displayPrice = map(test, "displayPrice") %>% unlist(),
+                       latitude = map(test, "latitude") %>% unlist(),
+                       longitude = map(test, "longitude") %>% unlist(),
+                       hotelFlags = map(test, "hotelFlags"),
+                       price = map(test, "price"),
+                       neighborhood = map(test, "neighborhood") %>% unlist(),
+                       reviews = map(test, "reviews"),
+                       resultType = map(test, "resultType") %>% unlist(),
+                       comparisonModel = map(test, "comparisonModel")) %>% 
+    drop_na() %>% 
+    mutate(price.lead = map(price, "lead") %>% unlist(),
+           price.strikeout = map(price, "strikeOut", .default = NA_character_) %>% unlist(),
+           reviews.localizedOverallRating = map(reviews, "localizedOverallRating") %>% unlist(),
+           reviews.localizedCount = map(reviews, "localizedCount") %>% unlist(),
+           reviews.superlative = map(reviews, "superlative", .default = NA_character_) %>% unlist(),
+           comparisonModel.amenities = map(comparisonModel, "amenities"),
+           comparisonModel.starRating = map(comparisonModel, "starRating") %>% unlist()) %>% 
+    mutate(displayPrice = parse_number(displayPrice),
+           latitude = parse_number(latitude),
+           longitude = parse_number(longitude),
+           price.lead = parse_number(price.lead),
+           price.strikeout = parse_number(price.strikeout),
+           reviews.localizedOverallRating = parse_number(reviews.localizedOverallRating),
+           reviews.localizedCount = parse_number(reviews.localizedCount),
+           reviews.superlative = parse_factor(reviews.superlative,
+                                              levels = c(NA_character_, "Good", "Very Good", "Excellent", "Wonderful", "Exceptional"),
+                                              ordered = T)) %>% 
+    mutate(price.strikeout = if_else(is.na(price.strikeout), price.lead, price.strikeout)) %>% 
+    select(hotelId, 
+           hotelName, 
+           neighborhood, 
+           price.lead, 
+           price.strikeout,
+           reviews.superlative,
+           reviews.localizedOverallRating,
+           reviews.localizedCount,
+           comparisonModel.starRating,
+           latitude,
+           longitude,
+           hotelFlags, 
+           comparisonModel.amenities,
+           comparisonModel)
+
+  return(test_tibble)
+}
+
+# tb = get_hotels("data/Hotels/Expedia_hotels_150.json")
+
+assumedLocation = here::here("data/Hotels/Expedia_hotels.zip")
+if(file.exists(assumedLocation)){
+  local_path = assumedLocation
+} else {
+  local_path = choose.files(default = here::here(), caption = "Select zip folder containing Expedia hotel jsons", multi = F)
+}
+
+local_path %>% unzip(exdir = here::here("data/Hotels/Expedia_hotels"))
+hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.json", full.names = T) %>% map(get_hotels) %>% bind_rows()
+```
+
+```{r Get hotels rds}
+hotels = read_rds(here::here("data/hotels.rds"))
+```
+
+```{r Quick check: general distribution}
+hotels %>% select(neighborhood, reviews.localizedOverallRating, comparisonModel.starRating) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+  geom_bar(stat = "count") +
+  facet_wrap(~key, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(title = "General distribution of hotels")
+```
+
+```{r Quick check: histogram general}
+hotels %>% select(price.lead, price.strikeout, reviews.localizedCount) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~key, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  labs(title = "General distribution of hotels (2)")
+  
+```
+
+```{r Quick check: spatial distr}
+hotels_sf = hotels %>% 
+  select(hotelName, everything()) %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 6668) %>% 
+  st_transform(6677)
+
+hotels_sf %>% filter(price.strikeout < 500) %>% 
+  tm_shape() +
+  tm_dots(col = "price.strikeout", title = "Price") +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+  tm_layout(title = "Price distribution of hotels")
+
+# get_map("Tokyo") %>% ggmap() +
+#   geom_sf(data = hotels_sf)
+```
+There is a number of hotels which follow the trend that hotels closer to large stations (see Shibuya, Shinjuku) are pricier. Otherwise, a good mix exists. This could be due to anomalies in pricing leading to less-than-optimal colour-binning.
+
+```{r Quick check: spatial distr nbh}
+hotels_sf %>% filter(price.strikeout < 500) %>% 
+  tm_shape() + 
+  tm_dots(col = "neighborhood") +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+  tm_layout(title = "Neighborhood distribution of hotels")
+```
+This just shows how the hotels are grouped according to Expedia.
+
+```{r Quick check: pairs}
+hotels %>% filter(price.strikeout > 0 & price.strikeout < 1000) %>% 
+  ggpairs(columns = c("price.strikeout", 
+                      "reviews.localizedOverallRating",
+                      "comparisonModel.starRating"),
+          mapping = aes(alpha = 0.4))
+```
+
+These are paired plots for price (strikeout -- un-discounted prices), overall rating, and star rating. If we take away extremes (two hotels > \$1k per night, and all non-responses defaulting to \$0), there is a good (0.6) correlation between the price and the star rating, and a slightly-less good correlation between review rating and star rating. Looking at the scatterplots on the left it seems that hotels of all prices can exist along a variety of ratings, but as the price drops, both the rating itself, and the certainty of that rating also drops. At some point just looking at the price determines the minimal rating -- for example, at $500/night (a hefty sum, to be sure), the star rating will most definitely be a 4 or above, and the review rating at least 4.5.
+
+```{r Regression Analysis}
+hotels_ols = lm(price.strikeout ~ reviews.localizedOverallRating + comparisonModel.starRating + factor(neighborhood), data = hotels)
+
+summary(hotels_ols)
+```
+
+Running a regression analysis seems also to show that both review rating and star rating are significant factors contributing to the hotel's price (for p<0.01), with a \$68 increase in room rates for every review rating point, and a \$96 increase for every star.
+
+#Expedia destinations  
+
+Next, we will attempt to look at the destinations stored within Expedia.
+
+```{r Expedia destinations}
+destinations = here::here("data/Hotels/Expedia_hotels") %>% 
+  list.files(pattern = "*.json", full.names = T) %>%
+  map(read_json) %>% 
+  map(c("sortAndFilter", "options", "poi", "options")) %>% 
+  unlist(recursive = F) %>%  
+  map(as_tibble) %>% 
+  bind_rows() %>% 
+  separate(value, sep = ":", into = c("value", "extrainfo")) %>% 
+  separate(value, sep = ",", into = c("latitude", "longitude")) %>% 
+  select(-selected) %>% 
+  mutate_at(.vars = 2:4, .funs = as.numeric) %>% 
+  distinct()
+
+#so far, iterating over all json responses gives the same 20 destinations. Perhaps they are classified by city.
+
+destinations_sf = destinations %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 6668) %>% 
+  st_transform(6677)
+
+destinations_sf %>% mutate(colour = case_when(label == "Sensō-ji Temple" ~ "goldenrod1",
+                                              label == "Asakusa Shrine" ~ "goldenrod1",
+                                              TRUE ~ "maroon")) %>% 
+  tm_shape() +
+  tm_dots(col = "colour") +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+  tm_layout(title = "Expedia Destinations")
+```
+
+The two destinations Asakusa Shrine and Senso-ji are placed right next to each other. While they are technically two different places, they usually serve as part of the same destination. Two equally strong arguments may be put forth here. On the one hand, since practically every trip made to these locations will always put these destinations within the same trip, one of those destinations should be viewed as a duplicate, as not doing so could lead to an unbalanced desire there. On the other, having two destinations next to each other does not necessarily diminish the satisfaction one derives from going to each place -- so they should not be treated as duplicates.
+
+#Hexagonal grid
+I am now going to create a hexagonal grid based roughly off the perimeter of the Yamanote Line to denote a gridded area for central Tokyo. The centres of which will be used to calculate accessibility scores.
+```{r Get grid, eval=F}
+q = getbb("Tokyo") %>%
+  opq(timeout = 60) %>%
+  add_osm_feature("route", "train") %>%
+  add_osm_feature("name:en", "JR Yamanote Line (Outer)")
+
+yamanote = osmdata_sf(q)
+yamanote_area = yamanote$osm_lines %>%
+  st_transform(6677) %>% 
+  st_union() %>% 
+  st_convex_hull() %>% 
+  st_buffer(1000)
+yamanote_area_grid = yamanote_area %>% 
+  st_make_grid(square = F, cellsize = 500) %>% 
+  st_sf() %>% 
+  rowid_to_column("grid.id")
+```
+
+```{r Get grid rds}
+yamanote_area_grid = read_rds(here::here("data/yamanote_area_grid.rds"))
+```
+
+```{r Show grid}
+tm_shape(yamanote_area_grid) + tm_polygons(alpha = 0.1) +
+  tm_shape(destinations_sf) + tm_dots(col = "turquoise", size = 0.05) +
+  tm_shape(hotels_sf) + tm_dots(col = "maroon", size = 0.02) +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+  tm_layout(title = "Geometries of grid, hotels and destinations")
+```
+
+#Grid statistics  
+In total, `r yamanote_area_grid %>% length()` grid hexagons were created.
+
+```{r Distribution of hotels in grid}
+### the _aggr suffix means that the dataset is aggregated.
+### (not aggravated) (nor aggroed)
+### (whatever)
+
+# Zeroes are inconclusive: take away all zero-price hotels
+hotels_sf = hotels_sf %>% filter(price.strikeout > 0)
+
+hotels_aggr = st_join(hotels_sf, yamanote_area_grid) %>% 
+  replace_na(list(grid.id = -1)) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(grid.id) %>% 
+  summarise(price.strikeout.average = mean(price.strikeout),
+            no.hotels = n())
+hotels_aggr %>% 
+  filter(grid.id > 0) %>% 
+  ggplot() +
+    geom_histogram(aes(x = no.hotels), binwidth = 1)
+  
+```
+
+This is the distribution of hotels in the grids. Most grids (80+) have only one hotel in them. The most populous grid has `r max((hotels_aggr %>% filter(grid.id > 0))$no.hotels)`. 209 hotels were not included, due to them falling outside of the city centre zone defined earlier.
+
+#Grid average prices  
+```{r Grid average prices}
+yamanote_area_grid %>% 
+  left_join(hotels_aggr) %>%
+  select(price.strikeout.average, everything()) %>% 
+  tm_shape() + tm_fill(col = "price.strikeout.average", style = "jenks", colorNA = "#CCCCCC", alpha = 0.6) +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.4)
+```
+*Perhaps it would be a good idea to overlay the stations and lines on this.*
+
+#Accessibilities  
+```{r Accessibility of grids, eval=F}
+otp_path_folder = here::here("data/OpenTripPlanner/")
+otp_path = file.path(otp_path_folder,"otp-1.3.0-shaded.jar")
+otp_path_data = otp_path_folder
+otp_setup(otp = otp_path, 
+          dir = otp_path_data, 
+          memory = 6192, 
+          router = "Tokyo")
+otpcon = otp_connect() #May take a while to load
+
+from = yamanote_area_grid %>% 
+  st_centroid() %>% 
+  st_transform(4326)
+to = destinations_sf %>% 
+  st_transform(4326)
+
+fromPlace = from %>% st_coordinates() %>% as_tibble() %>% mutate(fromID = from$grid.id) %>% slice(rep(1:n(), times = nrow(to)))
+toPlace = to %>% st_coordinates() %>% as_tibble() %>% mutate(toID = to$extrainfo) %>% slice(rep(1:n(), each = nrow(from))) 
+
+pb = progress_estimated(nrow(toPlace), 5)
+
+get_itenerary = function(fromY, fromX, toY, toX, fromID, toID) {
+  if(!is.null(pb)) pb$tick()$print()
+  from_ = str_glue("{fromY},{fromX}")
+  to_   = str_glue("{toY},{toX}")
+  
+  response = GET(url = "http://localhost:8080",
+                 path = "otp/routers/Tokyo/plan",
+                 query = list(fromPlace = from_,
+                              toPlace   = to_,
+                              time      = "6:00pm",
+                              date      = "2019-05-07",
+                              preferredAgencies = "TokyoMetro",
+                              maxTransfers = "5")) %>% 
+    content()
+  
+  if(is.null(response$plan)) return(NULL)
+  
+  response$plan$itineraries %>% 
+    map(as_tibble) %>%  
+    bind_rows(.id = "option") %>%
+    mutate(startTime = as.POSIXct(startTime/1000, origin = "1970-01-01"),
+           endTime   = as.POSIXct(endTime/1000,   origin = "1970-01-01")) %>%
+    mutate(leg.distance = map(legs, "distance") %>% unlist(),
+           leg.mode     = map(legs, "mode") %>% unlist(),
+           leg.routeId  = map(legs, "routeId", .default = NA) %>% unlist(),
+           leg.from     = map(legs, "from"),
+           leg.to       = map(legs, "to")) %>%
+    mutate(leg.from.stopId = map(leg.from, "stopId", .default = "Origin"),
+           leg.to.stopId   = map(leg.to,   "stopId", .default = "Destination"),
+           leg.from.stopCode = map(leg.from, "stopCode", .default = "none"),
+           leg.to.stopCode   = map(leg.to,   "stopCode", .default = "none")) %>% 
+    group_by(option) %>% 
+    mutate(leg = row_number()) %>% 
+    ungroup() %>% 
+    select(-walkLimitExceeded, -elevationLost, -elevationGained, -legs, -leg.to, -leg.from, -tooSloped) %>% 
+    mutate(fromID = fromID,
+           toID = toID)
+}
+
+grid_routes = pmap_dfr(list(fromX = fromPlace$X,
+                            fromY = fromPlace$Y,
+                            toX   = toPlace$X,
+                            toY   = toPlace$Y,
+                            fromID= fromPlace$fromID,
+                            toID  = toPlace$toID),
+                            get_itenerary)
+pb$stop()
+
+grid_routes = otp_plan(otpcon = otpcon,
+                       fromPlace = fromPlace,
+                       toPlace = toPlace,
+                       fromID = fromPlace$grid.id %>% as.character(),
+                       toID = toPlace$extrainfo %>% as.character(),
+                       mode = c("WALK", "TRANSIT"),
+                       date_time = as.POSIXct(strptime("2019-06-04 17:00", "%Y-%m-%d %H:%M")),
+                       get_geometry = T,
+                       numItineraries = 1,
+                       ncores = 4)
+```
+
+```{r Accessibility of grids rds}
+grid_routes = read_rds(here::here("data/grid_routes.rds"))
+
+from = read_rds(here::here("data/from.rds"))
+to = read_rds(here::here("data/to.rds"))
+fromPlace = read_rds(here::here("data/fromPlace.rds"))
+toPlace = read_rds(here::here("data/toPlace.rds"))
+```
+
+```{r Investigate routes}
+# missing destinations/grids: which?
+
+grid_missing = from %>% 
+  mutate(included = grid.id %in% grid_routes$fromPlace) %>% 
+  filter(!included)
+
+destinations_missing = to %>% 
+  mutate(included = extrainfo %in% grid_routes$toPlace) %>% 
+  filter(!included)
+
+tm_shape(grid_missing) + tm_dots(col = "maroon", title = "Missing grids") +
+  tm_shape(destinations_missing) + tm_dots(col = "turquoise", title = "Missing destinations") +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.4) +
+  tm_layout(title = "Missing geometries")
+```
+
+```{r Tracemap}
+### dataisbeautiful
+trace_routes = grid_routes %>% 
+  st_zm() %>% 
+  group_by(fromPlace, toPlace) %>% 
+  summarise()
+
+tm_shape(trace_routes) +
+  tm_lines(lwd = 1.25, alpha = 0.07, col = "white") +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.2) +
+  tm_layout(bg.color = "black", title = "Tracemap of routes from grid centres to destinations")
+```
+
+```{r Average times}
+grid_aggr_time = grid_routes %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(fromPlace, toPlace) %>% 
+  summarise(duration = first(duration)) %>% 
+  group_by(fromPlace) %>%
+  summarise(duration = mean(duration)) %>% 
+  mutate(fromPlace = as.integer(fromPlace)) %>% 
+  right_join(yamanote_area_grid, by = c("fromPlace" = "grid.id")) %>% 
+  select(duration, everything()) %>% 
+  st_as_sf()
+
+tm_shape(grid_aggr_time) +
+  tm_fill(col = "duration", style = "cont", alpha = 0.7) +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.4) +
+  tm_layout(title = "Accessibility of grid-centers by time taken")
+
+# very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (N-S), and the Chuo Line cluster (E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method is not good enough, because the results are not "spread out" enough.
+```
