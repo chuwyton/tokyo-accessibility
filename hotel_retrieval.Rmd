@@ -20,6 +20,8 @@ library(opentripplanner)
 library(httr)
 
 tmap_mode("view")
+
+jalan_apikey = Sys.getenv("jalan_apikey")
 ```
 
 ```{r Prefix Suffix definitions, include=F}
@@ -33,7 +35,7 @@ tmap_mode("view")
 We will first look at non-spatial analysis of hotels in Tokyo.
 
 Search condition: 1 - 2 July 2019, 1 adult 1 room.
-```{r Get hotels, eval=F}
+```{r Get hotels, eval=F, include=F}
 get_hotels = function(path) {
   test = read_json(path)$hotels %>% keep(~.x$type == "HotelViewModel")
   test_tibble = tibble(hotelId = map(test, "hotelId") %>% unlist(),
@@ -98,9 +100,15 @@ local_path %>% unzip(exdir = here::here("data/Hotels/Expedia_hotels"))
 hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.json", full.names = T) %>% map(get_hotels) %>% bind_rows()
 ```
 
-```{r Get hotels rds}
+```{r Get hotels rds, eval=F, include=F}
 hotels = read_rds(here::here("data/hotels.rds"))
 ```
+
+```{r Get hotels jalan.net}
+query = 
+
+```
+
 
 ```{r Quick check: general distribution}
 hotels %>% select(neighborhood, reviews.localizedOverallRating, comparisonModel.starRating) %>% 
