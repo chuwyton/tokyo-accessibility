@@ -14,6 +14,8 @@ CRS: Japanese Geodetic Datum 2011 (54N). This encompasses Tokyo and is the most 
 library(tidyverse)
 library(jsonlite)
 library(sf)
+library(sp)
+library(spdep)
 library(ggmap)
 library(tmap) #for exploration
 library(GGally) # for pairs, mostly
@@ -139,7 +141,7 @@ hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.js
 hotels = read_rds(here::here("data/hotels.rds"))
 ```
 
-#Hexagonal grids
+##Hexagonal grids
 
 Before moving on, I'll create the boundary for my research, and cut it into grids. This allows us to scope the hotels down to only the specific area we're looking at.
 
@@ -183,14 +185,6 @@ tm_shape(yamanote_area_grid) +
   tm_dots(col = "within.boundary", title="Falls within boundary") +
   tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
   tm_layout(title = "Inclusion of hotels")
-```
-
-```{r Show grid}
-tm_shape(yamanote_area_grid) + tm_polygons(alpha = 0.1) +
-  tm_shape(destinations_sf) + tm_dots(col = "turquoise", size = 0.05) +
-  tm_shape(hotels_sf) + tm_dots(col = "maroon", size = 0.02) +
-  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
-  tm_layout(title = "Geometries of grid, hotels and destinations")
 ```
 
 Altogether, `r nrow(filter(hotels_sf, within.boundary == "Yes"))` out of `r nrow(hotels_sf)` hotels fall in the central area.
@@ -321,7 +315,7 @@ summary(hotels_ols_int)
 ```
 
 
-#Expedia destinations  
+##Expedia destinations  
 
 Next, we will attempt to look at the destinations stored within Expedia.
 
@@ -364,7 +358,17 @@ destinations = destinations %>%
   filter(label != "Asakusa Shrine")
 ```
 
-#Grid statistics  
+```{r Show grid}
+tm_shape(yamanote_area_grid) + tm_polygons(alpha = 0.1) +
+  tm_shape(destinations_sf) + tm_dots(col = "turquoise", size = 0.05) +
+  tm_shape(hotels_sf) + tm_dots(col = "maroon", size = 0.02) +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+  tm_layout(title = "Geometries of grid, hotels and destinations")
+```
+
+In all, these are the objects used for analyses.
+
+##Grid statistics  
 In total, `r yamanote_area_grid %>% length()` grid hexagons were created. The hotels are binned into these grids.
 
 ```{r Distribution of hotels in grid}
@@ -384,6 +388,9 @@ hotels_aggr = st_join(hotels_sf, yamanote_area_grid) %>%
             price.lead.sd = sd(price.lead),
             no.hotels = n())
 
+hotels_aggr_sf = yamanote_area_grid %>% 
+  left_join(hotels_aggr)
+
 hotels_aggr %>% 
   filter(grid.id > 0) %>% 
   gather("key", "value", -grid.id, -no.hotels) %>% 
@@ -399,10 +406,9 @@ hotels_aggr %>%
 
 This is the distribution of hotels in the grids. The most populous grid has `r max((hotels_aggr %>% filter(grid.id > 0))$no.hotels)`.
 
-#Grid average prices  
+##Grid average prices  
 ```{r Grid average prices}
-yamanote_area_grid %>% 
-  left_join(hotels_aggr) %>%
+hotels_aggr_sf %>%
   select(grid.id, everything()) %>% 
   tm_shape() + 
   tm_fill(col = c("price.lead.average", "price.lead.median", "price.lead.sd"), 
@@ -412,6 +418,48 @@ yamanote_area_grid %>%
   tm_basemap(server = "OpenStreetMap", alpha = 0.4)
 ```
 *Perhaps it would be a good idea to overlay the stations and lines on this.*
+
+#Spatial Autocorrelation
+
+*Explain spatial autocorrelation here*
+
+```{r Spatial Autocorrelation}
+hotels_aggr_sp = as(hotels_aggr_sf %>% filter(!is.na(price.lead.average)), "Spatial")
+
+hotels_nb = poly2nb(hotels_aggr_sp)
+hotels_wt = nb2listw(hotels_nb, style = "W", zero.policy = T)
+
+hotels_lag = lag.listw(hotels_wt, hotels_aggr_sp$price.lead.average)
+
+ggplot() +
+  geom_point(aes(x = hotels_aggr_sp$price.lead.average, y = hotels_lag))
+```
+
+There seems to be a correlation between grid average room rates and those of their neighbours, although that correlation seems to quickly deteriorate for pricier grids. *Can we make the conclusion that higher-priced hotels (higher priced grids) are more influenced by intrinsic factors rather than locational ones?*
+
+##Moran's I
+```{r Moran}
+moran.test(hotels_aggr_sp$price.lead.average, hotels_wt, zero.policy = T)
+```
+
+*Here we see that there is a just-strong-enough correlation to suspect some spatial factor?*
+
+##Local Moran
+*To look at the local amount of clustering*
+```{r}
+moran_local = localmoran(hotels_aggr_sp$price.lead.average, hotels_wt, zero.policy = T)
+hotels_aggr_sp %>% 
+  st_as_sf() %>%
+  mutate("moran.local" = moran_local[,1]) %>%
+  st_set_geometry(NULL) %>% 
+  select(grid.id, moran.local) %>% 
+  left_join(hotels_aggr_sf, .) %>% 
+  tm_shape() +
+    tm_fill(col = "moran.local", style = "jenks", palette = "-RdBu", colorNA = "#CCCCCC", alpha = 0.8) +
+    tm_basemap(server = "OpenStreetMap", alpha = 0.4) +
+    tm_layout(title = "LISA (local clustering)")
+```
+*Hmm...*
 
 #Accessibilities  
 ```{r Accessibility of grids, eval=F}
