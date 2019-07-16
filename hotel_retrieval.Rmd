@@ -40,33 +40,44 @@ We will first look at non-spatial analysis of hotels in Tokyo.
 
 ```{r Scrape hotels}
 #6~7 Nov, 1 adult, 1 room
-#https://www.expedia.com/Hotel-Search?destination=Tokyo%2C+Japan&latLong=35.675%2C139.76&regionId=179900&startDate=11%2F06%2F2019&endDate=11%2F07%2F2019&rooms=1&adults=1
+#build fetch
 
-# url_file = here::here("data/Tokyo (and vicinity), Japan Hotel Search Results.html")
+url = "https://www.expedia.com/"
+path = "hotel-shop/api/1/en_US/hotels"
+query = c(accessibility = "",
+          amenities = "",
+          destination = "Tokyo (and vicinity), Japan",
+          endDate = "2019-11-07",
+          latLong = "35.675,139.76",
+          lodging = "",
+          paymentType = "",
+          price = "",
+          regionId = "179900",
+          sort = "recommended",
+          startDate = "2019-11-06",
+          travelerType = "",
+          userRewards = "true",
+          localDateFormat = "M/d/yyyy",
+          priceFilterBuckets = "",
+          count = "2000",
+          startingIndex = "1",
+          adults = "1")
 
-# test_url = "https://www.expedia.com/Hotel-Search?destination=Tokyo%2C+Japan&latLong=35.675%2C139.76&regionId=179900&startDate=11%2F06%2F2019&endDate=11%2F07%2F2019&rooms=1&adults=1"
-
-# #RSelenium: start server
-# checkForServer()
-# startServer()
-# remDr = remoteDriver()
-# remDr$open()
-# 
-# #navigate
-# remDr$navigate(test_url)
-# 
-# #scroll
-# for(i in 1:10) {
-#   remDr$executeScript(str_glue("scroll(0,{i*10000});"))
-#   Sys.sleep(2)
-# }
-# 
-# #get html
-# page_src = remDr$getPageSource()
-
-# html = read_html(url_file)
-
-# html %>% html_nodes("div[class='uitk-card uitk-grid imagelayout-left-fullbleed']")
+response = GET(url = url,
+               query = query,
+               add_headers(.headers = c("accept-encoding" = "gzip, deflate, br",
+                      "accept-language" = "en-US,en;q=0.9,zh-CN;q=0.8,zh-TW;q=0.7,zh;q=0.6,ja;q=0.5",
+                      "x-remote-addr" = "103.24.77.51, 96.17.180.174, 125.56.219.90, 10.7.22.119, 52.220.191.232",
+                      "cookie" = "tpid=v.1,1; iEAPID=0; currency=USD; linfo=v.4,|0|0|255|1|0||||||||1033|0|0||0|0|0|-1|-1; HMS=8eb7de8a-4f9c-48e9-af6c-37569e4953ca; DUAID=66cca9d4-baf2-410f-8365-6288c866691e; MC1=GUID=66cca9d4baf2410f83656288c866691e; ak_bmsc=2CE9B6A63AC897D59852F5211CEBAEF06011B4AE6A60000062542C5DC32A1816~plIdWDwJQecFy6mA/nhsX02W/Mj4berGkhXPNqh/2ATQLmynxQHYAlXl7SCFZzn0ETD3EbKru9s4vkAgCfSq2EF4el/2JdgH8j85jGXsCb/gBrI90XKgK8XTdG7DI314zn7kyKa7Uvnp7FJvRhF7/cTN/wkt8vD/r4sBbwY1JNXmfJCSgB16+y9W/JgzXNOnK23paCqQ5RNrMUY3OH9+EPWp3wxvOClusQVT/NMMp2AKA=; AMCVS_C00802BE5330A8350A490D4C%40AdobeOrg=1; aspp=v.1,0|||||||||||||; stop_mobi=yes; JSESSIONID=7D73FBF9F8078EE5B8F5BCD914A66378; s_ecid=MCMID%7C33131617227363293851514339830081388369; AMCV_C00802BE5330A8350A490D4C%40AdobeOrg=1406116232%7CMCIDTS%7C18093%7CMCMID%7C33131617227363293851514339830081388369%7CMCAAMLH-1563791070%7C3%7CMCAAMB-1563791070%7CRKhpRz8krg2tLO6pguXWp5olkAcUniQYPHaMWWgdJ3xzPWQmdj0y%7CMCOPTOUT-1563193470s%7CNONE%7CMCAID%7CNONE%7CvVersion%7C2.5.0; s_cc=true; CONSENTMGR=ts:1563186271727%7Cconsent:true; AB_Test_TripAdvisor=A; qualtrics_sample=false; rlt_marketing_code_cookie=; qualtrics_SI_sample=false; ipsnf3=v.3|us|1|753|chandler; JSESSION=c50a1783-393c-46ee-8ab0-db868fc44635; intent_media_prefs=; _gcl_au=1.1.1825130036.1563186272; __gads=ID=2b5a47aa8ae5e1da:T=1563186275:S=ALNI_MaLqKpR9M90UcseTvO2fM9DRd2VIg; im_snid=4c52d204-9959-4169-b870-7eed0cb82b28; _ga=GA1.2.615676407.1563186272; _gid=GA1.2.1463963763.1563186273; _gat_gtag_UA_35711341_2=1; _fbp=fb.1.1563186272743.1212476019; _tq_id.TV-721872-1.7ec4=e9fe8c18af11ea4e.1563186273.0.1563186273..; xdid=340fe610-5e53-41ff-962a-aba253adeb0d|1563186277|expedia.com; x-CGP-exp-30353=3; x-CGP-exp-15795=2; x-CGP-exp-28702=0; pwa_csrf=b8933d54-eebb-4ddc-a92c-33e04a147603|6BQK3yOPKGEw5Y3yfS25QxhjzV3aP_DkcczvTFm13FjfGtca9c5X54oK6qyptC6FYqM0gnUSPy16dBgZ3LaCEw; x-cgp-exp=27461.79023.pwa; x-CGP-exp-27461=1; s_ppn=page.Hotel-Search; utag_main=v_id:016bf52995f30015c9989cde72f303073001806b00bd0$_sn:1$_ss:0$_pn:2%3Bexp-session$_st:1563188088847$ses_id:1563186271731%3Bexp-session; cesc=%7B%22visitNumber%22%3A%5B%221%22%2C1563186274123%5D%2C%22cidVisit%22%3A%5B%22Brand.DTI%22%2C1563186292494%5D%2C%22entryPage%22%3A%5B%22Homepage%22%2C1563186292494%5D%2C%22cid%22%3A%5B%22Brand.DTI%22%2C1563186274123%5D%7D; s_ppvl=Homepage%2C24%2C24%2C969%2C1364%2C969%2C1920%2C1080%2C1%2CP; _ctz_plugin_opt=0; s_ppv=Homepage%2C100%2C24%2C9675%2C1364%2C969%2C1920%2C1080%2C1%2CP; IM_eu_freq_cap=Y",
+                      "x-user-state" = "anonymous",
+                      "x-user-agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.100 Safari/537.36",
+                      "user-agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.100 Safari/537.36",
+                      "content-type" = "application/json",
+                      "accept" = "application/json",
+                      "referer" = "https://www.expedia.com/Hotel-Search?destination=Tokyo%2C+Japan&latLong=35.675%2C139.76&regionId=179900&startDate=11%2F06%2F2019&endDate=11%2F07%2F2019&rooms=1&adults=1",
+                      "authority" = "www.expedia.com",
+                      "x-mc1-guid" = "66cca9d4-baf2-410f-8365-6288c866691e",
+                      "x-api-token" = "83b54f81b7055087cc1096b4bbbbeeaf868dd080")))
 ```
 
 
@@ -588,16 +599,16 @@ grid_aggr_time = grid_routes %>%
   group_by(fromPlace, toPlace) %>% 
   summarise(duration = first(duration)) %>% 
   group_by(fromPlace) %>%
-  summarise(duration = mean(duration)) %>% 
+  summarise(duration = mean(duration)/60) %>% 
   mutate(fromPlace = as.integer(fromPlace)) %>% 
   right_join(yamanote_area_grid, by = c("fromPlace" = "grid.id")) %>% 
   select(duration, everything()) %>% 
   st_as_sf()
 
 tm_shape(grid_aggr_time) +
-  tm_fill(col = "duration", style = "cont", alpha = 0.7) +
+  tm_fill(col = "duration", style = "jenks", n = 10, palette = "-inferno", alpha = 0.7) +
   tm_basemap(server = "OpenStreetMap", alpha = 0.4) +
-  tm_layout(title = "Accessibility of grid-centers by time taken")
+  tm_layout(title = "Accessibility of grid-centers by mean time taken")
 
 # very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (N-S), and the Chuo Line cluster (E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method is not good enough, because the results are not "spread out" enough.
 ```
