@@ -159,26 +159,65 @@ hotels = read_rds(here::here("data/hotels.rds"))
 
 Before moving on, I'll create the boundary for my research, and cut it into grids. This allows us to scope the hotels down to only the specific area we're looking at.
 
-```{r Get grid, eval=F}
-q = getbb("Tokyo") %>%
-  opq(timeout = 60) %>%
-  add_osm_feature("route", "train") %>%
+```{r Get line data, eval=F}
+# bounding box
+bb_tokyo = getbb("Tokyo")
+
+
+# queries
+q_linebase = bb_tokyo %>% 
+  opq(timeout = 60) %>% 
+  add_osm_feature("route", "train")
+
+q_yamanote = q_linebase %>% 
   add_osm_feature("name:en", "JR Yamanote Line (Outer)")
 
-yamanote = osmdata_sf(q)
-yamanote_area = yamanote$osm_lines %>%
-  st_transform(6677) %>% 
+q_chuo = q_linebase %>% 
+  add_osm_feature("name:en", "JR Chuo Rapid Line")
+
+# q_uenotokyo = q_linebase %>% 
+#   add_osm_feature("name:en", "Ueno-Tokyo Line (down)")
+
+q_keihintohoku = q_linebase %>% 
+  add_osm_feature("ref", "JK") %>% 
+  add_osm_feature("from:en", "Omiya")
+
+# retrieval
+yamanote_sf     = osmdata_sf(q_yamanote    )$osm_lines %>% st_transform(6677) %>% select(osm_id, name.en)
+chuo_sf         = osmdata_sf(q_chuo        )$osm_lines %>% st_transform(6677) %>% select(osm_id, name.en)
+keihintohoku_sf = osmdata_sf(q_keihintohoku)$osm_lines %>% st_transform(6677) %>% select(osm_id, name.en)
+
+lines_sf = rbind(yamanote_sf, chuo_sf, keihintohoku_sf) %>% 
+  na.omit() %>% 
+  mutate(col = case_when(name.en == "Yamanote Line"      ~ "#80c241",
+                         name.en == "JR Chuo Line"       ~ "#f15a22",
+                         name.en == "Chuo Line"          ~ "#f15a22",
+                         name.en == "Keihin-Tohoku Line" ~ "#00b2e5"))
+```
+
+```{r Get lines rds, include=F}
+yamanote_sf     = read_rds(here::here("data/yamanote_sf.rds"))
+chuo_sf         = read_rds(here::here("data/chuo_sf.rds"))
+keihintohoku_sf = read_rds(here::here("data/keihintohoku_sf.rds"))
+
+lines_sf = rbind(yamanote_sf, chuo_sf, keihintohoku_sf) %>% 
+  na.omit() %>% 
+  mutate(col = case_when(name.en == "Yamanote Line"      ~ "#80c241",
+                         name.en == "JR Chuo Line"       ~ "#f15a22",
+                         name.en == "Chuo Line"          ~ "#f15a22",
+                         name.en == "Keihin-Tohoku Line" ~ "#00b2e5"))
+```
+
+```{r Get grid}
+yamanote_area = yamanote_sf %>% 
   st_union() %>% 
   st_convex_hull() %>% 
   st_buffer(1000)
+
 yamanote_area_grid = yamanote_area %>% 
   st_make_grid(square = F, cellsize = 500) %>% 
   st_sf() %>% 
   rowid_to_column("grid.id")
-```
-
-```{r Get grid rds}
-yamanote_area_grid = read_rds(here::here("data/yamanote_area_grid.rds"))
 ```
 
 ```{r hotel inclusion}
@@ -650,36 +689,9 @@ grid_aggr_time = grid_routes %>%
   select(duration, everything()) %>% 
   st_as_sf()
 
-q_chuo = getbb("Tokyo") %>% 
-  opq(timeout = 60) %>% 
-  add_osm_feature("route", "train") %>% 
-  add_osm_feature("name:en", "JR Chuo Rapid Line")
-
-chuo = osmdata_sf(q_chuo)
-chuo_sf = chuo$osm_lines %>% 
-  st_transform(6677)
-
 tm_shape(grid_aggr_time) +
   tm_fill(col = "duration", style = "jenks", n = 10, palette = "-inferno", alpha = 0.7) +
   tm_basemap(server = "OpenStreetMap", alpha = 0.4) +
   tm_layout(title = "Accessibility of grid-centers by mean time taken")
 ```
 very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (N-S), and the Chuo Line cluster (E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method is not good enough, because the results are not "spread out" enough.
-
-```{r Get grid, eval=F}
-q = getbb("Tokyo") %>%
-  opq(timeout = 60) %>%
-  add_osm_feature("route", "train") %>%
-  add_osm_feature("name:en", "JR Yamanote Line (Outer)")
-
-yamanote = osmdata_sf(q)
-yamanote_area = yamanote$osm_lines %>%
-  st_transform(6677) %>% 
-  st_union() %>% 
-  st_convex_hull() %>% 
-  st_buffer(1000)
-yamanote_area_grid = yamanote_area %>% 
-  st_make_grid(square = F, cellsize = 500) %>% 
-  st_sf() %>% 
-  rowid_to_column("grid.id")
-```
