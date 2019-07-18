@@ -694,7 +694,20 @@ grid_aggr_time = grid_routes %>%
 
 tm_shape(grid_aggr_time) +
   tm_fill(col = "duration", style = "jenks", n = 10, palette = "-inferno", alpha = 0.7) +
-  tm_basemap(server = "OpenStreetMap", alpha = 0.4) +
-  tm_layout(title = "Accessibility of grid-centers by mean time taken")
+  tm_layout(title = "Accessibility of grid-centres by mean time taken") +
+  tm_base
 ```
-very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (N-S), and the Chuo Line cluster (E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method is not good enough, because the results are not "spread out" enough.
+very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (Blue Line; Keihin-Tohoku; N-S), and the Chuo Line cluster (Orange line; Chuo; E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method may be too biased towards grids which are close to one attraction.
+
+```{r Average SLD}
+# straight-line distance
+
+grid_aggr_dist = yamanote_area_grid %>% 
+  mutate(dist.average = st_distance(., destinations_sf) %>% rowMeans())
+
+tm_shape(grid_aggr_dist) +
+  tm_fill(col = "dist.average", style = "jenks", n = 10, palette = "-inferno", alpha = 0.7) +
+  tm_layout(title = "Accessibility of grid-centres by mean straight-line distance") +
+  tm_base
+```
+On the other hand, this is the pattern which shows up when 
