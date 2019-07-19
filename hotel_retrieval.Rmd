@@ -592,7 +592,7 @@ get_itenerary = function(fromY, fromX, toY, toX, fromID, toID) {
                               toPlace   = to_,
                               time      = "6:00pm",
                               date      = "2019-11-06",
-                              maxTransfers = "5")) %>% 
+                              maxTransfers = 5)) %>% 
     content()
   
   if(is.null(response$plan)) return(NULL)
@@ -637,10 +637,17 @@ pb$stop()
 #                        get_geometry = T,
 #                        numItineraries = 1,
 #                        ncores = 4)
+
+grid_routes_all_vars = grid_routes
 ```
 
 ```{r Accessibility of grids rds}
-grid_routes = read_rds(here::here("data/grid_routes.rds"))
+grid_routes_all_vars = read_rds(here::here("data/grid_routes_all_vars.rds"))
+grid_routes_all_vars %>% 
+  select(fromID, toID, duration,
+         option, walkTime, transitTime, waitingTime, walkDistance, transfers,
+         leg, leg.from.stopId, leg.to.stopId, leg.mode, leg.distance) %>% 
+  mutate_at(vars(leg.from.stopId, leg.to.stopId, leg.mode, leg.distance), unlist)
 
 from = read_rds(here::here("data/from.rds"))
 to = read_rds(here::here("data/to.rds"))
