@@ -561,13 +561,13 @@ Moran's I statistic decreases as we increase the distance to 1500m. There is "ne
 
 #Accessibilities  
 ```{r Accessibility of grids, eval=F}
-otp_path_folder = here::here("data/OpenTripPlanner/")
-otp_path = file.path(otp_path_folder,"otp-1.3.0-shaded.jar")
-otp_path_data = otp_path_folder
-otp_setup(otp = otp_path, 
-          dir = otp_path_data, 
-          memory = 6192, 
-          router = "Tokyo")
+# otp_path_folder = here::here("data/OpenTripPlanner/")
+# otp_path = file.path(otp_path_folder,"otp-1.3.0-shaded.jar")
+# otp_path_data = otp_path_folder
+# otp_setup(otp = otp_path, 
+#           dir = otp_path_data, 
+#           memory = 6192, 
+#           router = "Tokyo")
 otpcon = otp_connect() #May take a while to load
 
 from = yamanote_area_grid %>% 
@@ -591,8 +591,7 @@ get_itenerary = function(fromY, fromX, toY, toX, fromID, toID) {
                  query = list(fromPlace = from_,
                               toPlace   = to_,
                               time      = "6:00pm",
-                              date      = "2019-05-07",
-                              preferredAgencies = "TokyoMetro",
+                              date      = "2019-11-06",
                               maxTransfers = "5")) %>% 
     content()
   
@@ -615,7 +614,6 @@ get_itenerary = function(fromY, fromX, toY, toX, fromID, toID) {
     group_by(option) %>% 
     mutate(leg = row_number()) %>% 
     ungroup() %>% 
-    select(-walkLimitExceeded, -elevationLost, -elevationGained, -legs, -leg.to, -leg.from, -tooSloped) %>% 
     mutate(fromID = fromID,
            toID = toID)
 }
@@ -629,16 +627,16 @@ grid_routes = pmap_dfr(list(fromX = fromPlace$X,
                             get_itenerary)
 pb$stop()
 
-grid_routes = otp_plan(otpcon = otpcon,
-                       fromPlace = fromPlace,
-                       toPlace = toPlace,
-                       fromID = fromPlace$grid.id %>% as.character(),
-                       toID = toPlace$extrainfo %>% as.character(),
-                       mode = c("WALK", "TRANSIT"),
-                       date_time = as.POSIXct(strptime("2019-06-04 17:00", "%Y-%m-%d %H:%M")),
-                       get_geometry = T,
-                       numItineraries = 1,
-                       ncores = 4)
+# grid_routes = otp_plan(otpcon = otpcon,
+#                        fromPlace = fromPlace,
+#                        toPlace = toPlace,
+#                        fromID = fromPlace$grid.id %>% as.character(),
+#                        toID = toPlace$extrainfo %>% as.character(),
+#                        mode = c("WALK", "TRANSIT"),
+#                        date_time = as.POSIXct(strptime("2019-06-04 17:00", "%Y-%m-%d %H:%M")),
+#                        get_geometry = T,
+#                        numItineraries = 1,
+#                        ncores = 4)
 ```
 
 ```{r Accessibility of grids rds}
@@ -710,4 +708,88 @@ tm_shape(grid_aggr_dist) +
   tm_layout(title = "Accessibility of grid-centres by mean straight-line distance") +
   tm_base
 ```
-On the other hand, this is the pattern which shows up when 
+On the other hand, this is the pattern which shows up when the accessibilities are calculated by the average straight-line distance from the grid centres to each of the destinations. The patterns are much smoother and don't show the level of specificity we see in the previous plot. Yet, we assume that this is a good estimation!
+
+Since the idea of using straight-line distance stems from the hypothesis that doing so is a good estimation of the actual distance/time taken for the traveller to reach each destination, we can derive the amount of over- and under-estimation for each grid. To do that, the distance mapping needs to be first turned into a time mapping. This is done by dividing the distance by the average speed of all trips from one grid centre.
+
+```{r Average speed, Average time, Difference in estimation}
+grid_aggr_speed = grid_routes %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(fromPlace, toPlace) %>% 
+  summarise(duration = first(duration),
+            walkDistance = first(walkDistance),
+            distance = sum(distance)) %>% 
+  mutate(speed = (walkDistance + distance)/(duration/60)) %>% 
+  group_by(fromPlace) %>% 
+  summarise(speed = mean(speed)) %>% 
+  mutate(fromPlace = as.integer(fromPlace)) %>% 
+  right_join(yamanote_area_grid, by = c("fromPlace" = "grid.id")) %>% 
+  st_as_sf()
+
+grid_aggr_time_sdl = grid_aggr_dist %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(grid_aggr_speed, by = c("grid.id" = "fromPlace")) %>% 
+  mutate(duration.sdl = dist.average/speed) %>% 
+  st_as_sf()
+
+grid_aggr_estimation_diff = grid_aggr_time %>% 
+  left_join(grid_aggr_time_sdl %>% st_set_geometry(NULL), by = c("fromPlace" = "grid.id")) %>% 
+  mutate(duration.diff = duration.sdl - duration)
+
+grid_aggr_estimation_diff %>% 
+  select(duration.diff, everything()) %>% 
+  tm_shape() +
+    tm_fill(col = "duration.diff", style = "jenks", n = 6, palette = "RdBu", alpha = 0.7) +
+    tm_base
+```
+The map above shows the degree to which using straight-line distance underestimates the time taken to travel to the destinations. The major stations seem to fare better, at a 10-minute underestimation. Some areas, however, have grossly underestimated timings -- up to half an hour.
+
+##Including accessibility metrics in the regression  
+Next, I will attempt to include (separately) the two accessibility metrics to the regression model. A regression model for the gridded data must be produced first:
+
+```{r Grid-based regression}
+hotels_aggr_all = hotels_sf %>% st_join(yamanote_area_grid) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(grid.id) %>% 
+  summarise_at(vars(price.lead, 
+                    reviews.localizedOverallRating, 
+                    comparisonModel.starRating),
+               mean) %>% 
+  left_join(grid_aggr_estimation_diff %>% st_set_geometry(NULL), by = c("grid.id" = "fromPlace"))
+
+lm(price.lead ~ reviews.localizedOverallRating + 
+     comparisonModel.starRating +
+     reviews.localizedOverallRating * comparisonModel.starRating,
+   data = hotels_aggr_all) %>% 
+  summary()
+```
+
+Next, adding average straight-line distance as a factor:
+```{r Grid-based regression with SLD}
+lm(price.lead ~ reviews.localizedOverallRating + 
+    comparisonModel.starRating +
+    reviews.localizedOverallRating * comparisonModel.starRating +
+    dist.average,
+  data = hotels_aggr_all) %>% 
+  summary()
+```
+
+There is not much that the average distance can explain. When using average time taken (of shortest network paths)
+```{r Grid-based regression with network}
+lm(price.lead ~ reviews.localizedOverallRating + 
+    comparisonModel.starRating +
+    reviews.localizedOverallRating * comparisonModel.starRating +
+    duration,
+  data = hotels_aggr_all) %>% 
+  summary()
+```
+Although the additional factor isn't significant, the model does improve slightly more than for the straight-line distance case. 
+```{r Grid-based regression on time-SLD}
+lm(price.lead ~ reviews.localizedOverallRating + 
+    comparisonModel.starRating +
+    reviews.localizedOverallRating * comparisonModel.starRating +
+    duration.sdl,
+  data = hotels_aggr_all) %>% 
+  summary()
+```
+
