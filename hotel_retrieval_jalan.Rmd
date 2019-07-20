@@ -15,6 +15,8 @@ library(tidyverse)
 library(lubridate)
 library(jsonlite)
 library(sf)
+library(sp)
+library(spdep)
 library(ggmap)
 library(tmap) #for exploration
 library(GGally) # for pairs, mostly
@@ -108,7 +110,7 @@ hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.js
 hotels = read_rds(here::here("data/hotels.rds"))
 ```
 
-```{r Get hotels jalan.net}
+```{r Get hotels jalan.net, eval=F}
 get_hotels_jalan = function(start, count) {
   if(exists("pb")) pb$tick()$print()
   jalan_url = "http://jws.jalan.net/"
@@ -220,9 +222,14 @@ jalan_hotels = jalan_hotels %>% mutate(Hotel.CheckInTime = as_datetime(str_glue(
                                 HotelType_English = jalan_hotel_type_enum[HotelType %>% match(jalan_hotel_type)])
 ```
 
+```{r Get hotels jalan.net rds}
+jalan_hotels = read_rds(here::here("data/jalan_hotels.rds"))
+```
+
+
 #Hexagonal grids
 
-Before moving on, I'll create the boundary for my research, and cut it into grids.
+Before moving on, I'll create the boundary for my research, and cut it into grids. This allows us to scope the hotels down to only the specific area we're looking at.
 
 ```{r Get grid, eval=F}
 q = getbb("Tokyo") %>%
@@ -240,6 +247,10 @@ yamanote_area_grid = yamanote_area %>%
   st_make_grid(square = F, cellsize = 500) %>% 
   st_sf() %>% 
   rowid_to_column("grid.id")
+```
+
+```{r Get grid rds}
+yamanote_area_grid = read_rds(here::here("data/yamanote_area_grid.rds"))
 ```
 
 ```{r Check inclusion}
@@ -388,7 +399,7 @@ jalan_hotels_sf %>%
 By looking at the spatial distribution, however, does ever-so-slightly hint at the trend that hotels closer to large stations (see Shibuya, Shinjuku) are pricier. Otherwise, a good mix exists.
 
 ```{r Quick check: spatial distr nbh}
-jalan_hotels_sf %>% filter(LowestRate < 30000) %>% 
+jalan_hotels_sf %>% 
   tm_shape() +
   tm_dots(col = "SmallArea_English", legend.show = F) +
   tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
@@ -398,22 +409,27 @@ jalan_hotels_sf %>% filter(LowestRate < 30000) %>%
 The classification of areas by jalan.net.
 
 ```{r Quick check: pairs}
-hotels %>% filter(LowestRate < 30000) %>% 
-  ggpairs(columns = c("LowestRate", 
-                      "reviews.localizedOverallRating",
-                      "comparisonModel.starRating"),
+jalan_hotels %>% 
+  ggpairs(columns = c("LowestRate",
+                      "Hotel.CheckInTime",
+                      "Hotel.CheckOutTime",
+                      "Rating"),
           mapping = aes(alpha = 0.4))
 ```
 
-These are paired plots for price (strikeout -- un-discounted prices), overall rating, and star rating. If we take away extremes (two hotels > \$1k per night, and all non-responses defaulting to \$0), there is a good (0.6) correlation between the price and the star rating, and a slightly-less good correlation between review rating and star rating. Looking at the scatterplots on the left it seems that hotels of all prices can exist along a variety of ratings, but as the price drops, both the rating itself, and the certainty of that rating also drops. At some point just looking at the price determines the minimal rating -- for example, at $500/night (a hefty sum, to be sure), the star rating will most definitely be a 4 or above, and the review rating at least 4.5.
+[Comparing to the expedia dataset]
+Here, the rating seems to have much lesser influence on the price, with a correlation of about 0.24. Apparently Check-out times have a better correlation...
 
 ```{r Regression Analysis}
-hotels_ols = lm(price.strikeout ~ reviews.localizedOverallRating + comparisonModel.starRating + factor(neighborhood), data = hotels)
+jalan_hotels_ols = lm(LowestRate ~ Hotel.CheckInTime + 
+                        Hotel.CheckOutTime + 
+                        factor(SmallArea_English) + 
+                        Hotel.CheckInTime * Hotel.CheckOutTime, data = jalan_hotels)
 
-summary(hotels_ols)
+summary(jalan_hotels_ols)
 ```
 
-Running a regression analysis seems also to show that both review rating and star rating are significant factors contributing to the hotel's price (for p<0.01), with a \$68 increase in room rates for every review rating point, and a \$96 increase for every star.
+Once again, running an ordinary least-squares regression shows that check-out times have the most "say" in deciding room rates, but even that doesn't have a good confidence level (P < 0.2).
 
 #Expedia destinations  
 
@@ -453,13 +469,10 @@ The two destinations Asakusa Shrine and Senso-ji are placed right next to each o
 ```{r Show grid}
 tm_shape(yamanote_area_grid) + tm_polygons(alpha = 0.1) +
   tm_shape(destinations_sf) + tm_dots(col = "turquoise", size = 0.05) +
-  tm_shape(hotels_sf) + tm_dots(col = "maroon", size = 0.02) +
+  tm_shape(jalan_hotels_sf) + tm_dots(col = "maroon", size = 0.02) +
   tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
   tm_layout(title = "Geometries of grid, hotels and destinations")
 ```
-
-#Grid statistics  
-In total, `r yamanote_area_grid %>% length()` grid hexagons were created.
 
 ```{r Distribution of hotels in grid}
 ### the _aggr suffix means that the dataset is aggregated.
@@ -467,32 +480,55 @@ In total, `r yamanote_area_grid %>% length()` grid hexagons were created.
 ### (whatever)
 
 # Zeroes are inconclusive: take away all zero-price hotels
-hotels_sf = hotels_sf %>% filter(price.strikeout > 0)
-
-hotels_aggr = st_join(hotels_sf, yamanote_area_grid) %>% 
+jalan_hotels_aggr = st_join(jalan_hotels_sf, yamanote_area_grid) %>% 
   replace_na(list(grid.id = -1)) %>% 
   st_set_geometry(NULL) %>% 
   group_by(grid.id) %>% 
-  summarise(price.strikeout.average = mean(price.strikeout),
+  summarise(LowestRate.Average = mean(LowestRate),
             no.hotels = n())
-hotels_aggr %>% 
+
+jalan_hotels_aggr %>% 
   filter(grid.id > 0) %>% 
   ggplot() +
     geom_histogram(aes(x = no.hotels), binwidth = 1)
-  
 ```
 
-This is the distribution of hotels in the grids. Most grids (80+) have only one hotel in them. The most populous grid has `r max((hotels_aggr %>% filter(grid.id > 0))$no.hotels)`. 209 hotels were not included, due to them falling outside of the city centre zone defined earlier.
+This is the distribution of hotels in the grids. Most grids have only one hotel in them. The most populous grid has `r max((jalan_hotels_aggr %>% filter(grid.id > 0))$no.hotels)`.
 
 #Grid average prices  
 ```{r Grid average prices}
-yamanote_area_grid %>% 
-  left_join(hotels_aggr) %>%
-  select(price.strikeout.average, everything()) %>% 
-  tm_shape() + tm_fill(col = "price.strikeout.average", style = "jenks", colorNA = "#CCCCCC", alpha = 0.6) +
+jalan_hotels_aggr_sf = yamanote_area_grid %>% left_join(jalan_hotels_aggr)
+
+jalan_hotels_aggr_sf %>%
+  select(LowestRate.Average, everything()) %>% 
+  tm_shape() + tm_fill(col = "LowestRate.Average", title = "Price", style = "jenks", colorNA = "#CCCCCC", alpha = 0.6) +
   tm_basemap(server = "OpenStreetMap", alpha = 0.4)
 ```
 *Perhaps it would be a good idea to overlay the stations and lines on this.*
+
+#Spatial Autocorrelation
+
+*Explain spatial autocorrelation here*
+
+```{r Spatial Autocorrelation}
+jalan_hotels_aggr_sp = as(jalan_hotels_aggr_sf %>% filter(!is.na(LowestRate.Average)), "Spatial")
+
+jalan_hotels_nb = poly2nb(jalan_hotels_aggr_sp)
+jalan_hotels_wt = nb2listw(jalan_hotels_nb, style = "W", zero.policy = T)
+
+jalan_hotels_lag = lag.listw(jalan_hotels_wt, jalan_hotels_aggr_sp$LowestRate.Average)
+
+ggplot() +
+  geom_point(aes(x = jalan_hotels_aggr_sp$LowestRate.Average, y = jalan_hotels_lag))
+```
+
+There seems to be a correlation between grid average room rates and those of their neighbours, although that correlation seems to quickly deteriorate for pricier grids. *Can we make the conclusion that higher-priced hotels (higher priced grids) are more influenced by intrinsic factors rather than locational ones?*
+
+```{r Moran}
+moran.test(jalan_hotels_aggr_sp$LowestRate.Average, jalan_hotels_wt, zero.policy = T)
+```
+
+*Here we see that there is a weak correlation.*
 
 #Accessibilities  
 ```{r Accessibility of grids, eval=F}
@@ -631,6 +667,6 @@ tm_shape(grid_aggr_time) +
   tm_fill(col = "duration", style = "cont", alpha = 0.7) +
   tm_basemap(server = "OpenStreetMap", alpha = 0.4) +
   tm_layout(title = "Accessibility of grid-centers by time taken")
-
-# very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (N-S), and the Chuo Line cluster (E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method is not good enough, because the results are not "spread out" enough.
 ```
+
+very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (N-S), and the Chuo Line cluster (E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method is not good enough, because the results are not "spread out" enough.
