@@ -3,6 +3,8 @@ title: "Analysing Hotel Prices"
 output:
   html_document:
     df_print: paged
+editor_options: 
+  chunk_output_type: console
 ---
 
 ggmap was used in this exploratory script.
@@ -18,10 +20,11 @@ library(GGally) # for pairs, mostly
 library(osmdata)
 library(opentripplanner)
 library(httr)
+library(xml2)
+library(rvest)
+library(RSelenium)
 
 tmap_mode("view")
-
-jalan_apikey = Sys.getenv("jalan_apikey")
 ```
 
 ```{r Prefix Suffix definitions, include=F}
@@ -29,13 +32,45 @@ jalan_apikey = Sys.getenv("jalan_apikey")
 ### _aggr: the dataset that this variable points to is aggregated.
 ```
 
-
 #Non-Spatial Analysis  
 
 We will first look at non-spatial analysis of hotels in Tokyo.
 
-Search condition: 1 - 2 July 2019, 1 adult 1 room.
-```{r Get hotels, eval=F, include=F}
+```{r Scrape hotels}
+#6~7 Nov, 1 adult, 1 room
+#https://www.expedia.com/Hotel-Search?destination=Tokyo%2C+Japan&latLong=35.675%2C139.76&regionId=179900&startDate=11%2F06%2F2019&endDate=11%2F07%2F2019&rooms=1&adults=1
+
+# url_file = here::here("data/Tokyo (and vicinity), Japan Hotel Search Results.html")
+
+# test_url = "https://www.expedia.com/Hotel-Search?destination=Tokyo%2C+Japan&latLong=35.675%2C139.76&regionId=179900&startDate=11%2F06%2F2019&endDate=11%2F07%2F2019&rooms=1&adults=1"
+
+# #RSelenium: start server
+# checkForServer()
+# startServer()
+# remDr = remoteDriver()
+# remDr$open()
+# 
+# #navigate
+# remDr$navigate(test_url)
+# 
+# #scroll
+# for(i in 1:10) {
+#   remDr$executeScript(str_glue("scroll(0,{i*10000});"))
+#   Sys.sleep(2)
+# }
+# 
+# #get html
+# page_src = remDr$getPageSource()
+
+# html = read_html(url_file)
+
+# html %>% html_nodes("div[class='uitk-card uitk-grid imagelayout-left-fullbleed']")
+```
+
+
+```{r Get hotels, eval=F}
+#NEW search condition: 6 - 7 November 2019, 1 adult 1 room.
+
 get_hotels = function(path) {
   test = read_json(path)$hotels %>% keep(~.x$type == "HotelViewModel")
   test_tibble = tibble(hotelId = map(test, "hotelId") %>% unlist(),
@@ -100,80 +135,191 @@ local_path %>% unzip(exdir = here::here("data/Hotels/Expedia_hotels"))
 hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.json", full.names = T) %>% map(get_hotels) %>% bind_rows()
 ```
 
-```{r Get hotels rds, eval=F, include=F}
+```{r Get hotels rds}
 hotels = read_rds(here::here("data/hotels.rds"))
 ```
 
-```{r Get hotels jalan.net}
-query = 
+#Hexagonal grids
 
+Before moving on, I'll create the boundary for my research, and cut it into grids. This allows us to scope the hotels down to only the specific area we're looking at.
+
+```{r Get grid, eval=F}
+q = getbb("Tokyo") %>%
+  opq(timeout = 60) %>%
+  add_osm_feature("route", "train") %>%
+  add_osm_feature("name:en", "JR Yamanote Line (Outer)")
+
+yamanote = osmdata_sf(q)
+yamanote_area = yamanote$osm_lines %>%
+  st_transform(6677) %>% 
+  st_union() %>% 
+  st_convex_hull() %>% 
+  st_buffer(1000)
+yamanote_area_grid = yamanote_area %>% 
+  st_make_grid(square = F, cellsize = 500) %>% 
+  st_sf() %>% 
+  rowid_to_column("grid.id")
 ```
 
-
-```{r Quick check: general distribution}
-hotels %>% select(neighborhood, reviews.localizedOverallRating, comparisonModel.starRating) %>% 
-  gather() %>% 
-  ggplot(aes(value)) +
-  geom_bar(stat = "count") +
-  facet_wrap(~key, scales = "free_x") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
-  labs(title = "General distribution of hotels")
+```{r Get grid rds}
+yamanote_area_grid = read_rds(here::here("data/yamanote_area_grid.rds"))
 ```
 
-```{r Quick check: histogram general}
-hotels %>% select(price.lead, price.strikeout, reviews.localizedCount) %>% 
-  gather() %>% 
-  ggplot(aes(value)) +
-  geom_histogram(bins = 30) +
-  facet_wrap(~key, scales = "free_x") +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
-  labs(title = "General distribution of hotels (2)")
-  
-```
+```{r hotel inclusion}
 
-```{r Quick check: spatial distr}
+# Check inclusion
 hotels_sf = hotels %>% 
   select(hotelName, everything()) %>% 
   st_as_sf(coords = c("longitude", "latitude"), crs = 6668) %>% 
   st_transform(6677)
 
-hotels_sf %>% filter(price.strikeout < 500) %>% 
+hotels_sf = hotels_sf %>% 
+  mutate(within.boundary = st_within(., yamanote_area_grid) %>% lengths()) %>% 
+  mutate(within.boundary = ifelse(within.boundary == 0, "No", "Yes"))
+
+tm_shape(yamanote_area_grid) +
+  tm_fill(col = "grey", alpha = 0.4) +
+  tm_shape(hotels_sf) +
+  tm_dots(col = "within.boundary", title="Falls within boundary") +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+  tm_layout(title = "Inclusion of hotels")
+```
+
+```{r Show grid}
+tm_shape(yamanote_area_grid) + tm_polygons(alpha = 0.1) +
+  tm_shape(destinations_sf) + tm_dots(col = "turquoise", size = 0.05) +
+  tm_shape(hotels_sf) + tm_dots(col = "maroon", size = 0.02) +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+  tm_layout(title = "Geometries of grid, hotels and destinations")
+```
+
+Altogether, `r nrow(filter(hotels_sf, within.boundary == "Yes"))` out of `r nrow(hotels_sf)` hotels fall in the central area.
+
+```{r Prune data}
+#...to include only those in the yamanote region.
+
+hotels_sf = hotels_sf %>% filter(within.boundary == "Yes")
+hotels = hotels_sf %>% st_set_geometry(NULL)
+```
+
+With the hotels which fall outside of our area of research put aside, we can now look at the various distributions of the remaining hotels.
+
+```{r Quick check: general distribution}
+hotels %>% select(reviews.localizedOverallRating, comparisonModel.starRating) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+  geom_bar(stat = "count") +
+  facet_wrap(~key, scales = "free_x", labeller = labeller(key = c(reviews.localizedOverallRating = "Overall rating",
+                                                                  comparisonModel.starRating = "Star rating"))) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.title.x = element_blank()) +
+  labs(title = "General distribution of hotels",
+       subtitle = "Overall rating, Star rating",
+       y = "Number of hotels")
+
+hotels %>% select(reviews.localizedOverallRating, comparisonModel.starRating, price.lead, price.strikeout) %>% 
+  gather(key = "key", value = "value", -price.lead, -price.strikeout) %>% 
+  gather(key = "price.type", value = "price", -key, -value) %>% 
+  ggplot(aes(x = value, y = price, group = value)) +
+  geom_boxplot(position = "dodge2") +
+  facet_grid(price.type~key, 
+             scales = "free_x", 
+             labeller = labeller(key = c(reviews.localizedOverallRating = "Overall rating",
+                                         comparisonModel.starRating = "Star rating",
+                                         price.lead = "Lead price",
+                                         price.strikeout = "Strikeout price"))) +
+  theme_minimal() +
+  theme(axis.title.x = element_blank()) +
+  labs(title = "Price distribution of hotels",
+       subtitle = "By Overall rating, Star rating",
+       y = "Price")
+```
+
+There are two types of prices shown in Expedia: the "lead" price and the "strikeout" price. The strikeout price is not always present, but if it is, it is always more than the lead price. the strikeout price is then displayed in a grey colour and "struck through", indicating that the lead price is a "special" price to the customer. Expedia explains that this price is "the third highest price for this room type at this property (with the same length of stay and cancellation policy) that customers have found on our site during a 30 day window" around the selected check-in date.
+
+This leads to some differences in the boxplots shown below, but nothing that would lead to drastic changes in regression analyses. For convenience the lead price will be used.
+
+We definitely see an upward trend in room prices for star rating. As for the overall rating, the prices peak at 4.7, and then go down, meaning that hotels with a rating higher than 4.7 actually enjoy a lowesr room price. This is probably because customers take the price into account when rating hotels.
+
+```{r Quick check: general distribution 2}
+hotels %>% group_by(neighborhood) %>% 
+  summarise(count = n()) %>% 
+  ggplot(aes(x = reorder(neighborhood, -count), y = count)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "General distribution of hotels",
+       subtitle = "Neighbourhood",
+       y = "Number of Hotels", x = "Neighbourhood") +
+  coord_flip()
+
+hotels %>%  
+  ggplot(aes(x = fct_reorder(neighborhood, price.lead), y = price.lead)) +
+    geom_boxplot() +
+    theme_minimal() +
+    labs(title = "General price distribution of hotels",
+         subtitle = "by Area",
+         caption = "*unit: S$/person/night",
+         y = "Price", x = "Neighbourhood") +
+  coord_flip()
+```
+
+*In general, most hotels are classified under "Tokyo". Thus, Tokyo also has the larges range of prices. I'm not sure if explaining the variances in areas makes any sense, because the areas themselves seem to be quite poorly classified to begin with.*
+
+```{r Quick check: spatial distr}
+hotels_sf %>% 
   tm_shape() +
-  tm_dots(col = "price.strikeout", title = "Price") +
+  tm_dots(col = "price.lead", title = "Price", style = "jenks") +
   tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
   tm_layout(title = "Price distribution of hotels")
 
 # get_map("Tokyo") %>% ggmap() +
 #   geom_sf(data = hotels_sf)
 ```
-There is a number of hotels which follow the trend that hotels closer to large stations (see Shibuya, Shinjuku) are pricier. Otherwise, a good mix exists. This could be due to anomalies in pricing leading to less-than-optimal colour-binning.
+
+There is a number of hotels which follow the trend that hotels closer to large stations (see Shibuya, Shinjuku) are pricier. Otherwise, a good mix exists.
 
 ```{r Quick check: spatial distr nbh}
-hotels_sf %>% filter(price.strikeout < 500) %>% 
+hotels_sf %>% 
   tm_shape() + 
   tm_dots(col = "neighborhood") +
   tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
   tm_layout(title = "Neighborhood distribution of hotels")
 ```
-This just shows how the hotels are grouped according to Expedia.
+
+*This just shows how the hotels are grouped according to Expedia.*
 
 ```{r Quick check: pairs}
-hotels %>% filter(price.strikeout > 0 & price.strikeout < 1000) %>% 
-  ggpairs(columns = c("price.strikeout", 
+hotels %>% 
+  ggpairs(columns = c("price.lead", 
                       "reviews.localizedOverallRating",
                       "comparisonModel.starRating"),
           mapping = aes(alpha = 0.4))
 ```
 
-These are paired plots for price (strikeout -- un-discounted prices), overall rating, and star rating. If we take away extremes (two hotels > \$1k per night, and all non-responses defaulting to \$0), there is a good (0.6) correlation between the price and the star rating, and a slightly-less good correlation between review rating and star rating. Looking at the scatterplots on the left it seems that hotels of all prices can exist along a variety of ratings, but as the price drops, both the rating itself, and the certainty of that rating also drops. At some point just looking at the price determines the minimal rating -- for example, at $500/night (a hefty sum, to be sure), the star rating will most definitely be a 4 or above, and the review rating at least 4.5.
+These are paired plots for price (strikeout -- un-discounted prices), overall rating, and star rating. There is a good (0.6) correlation between the price and the star rating, and a slightly-less good correlation between review rating and star rating. As demonstrated in the boxplots, hotels of all prices can exist along a variety of ratings, but as the price drops, both the rating itself, and the certainty of that rating also drops. At some point just looking at the price determines the minimal rating -- for example, at $500/night (a hefty sum, to be sure), the star rating will most definitely be a 4 or above, and the review rating at least 4.5.
 
 ```{r Regression Analysis}
-hotels_ols = lm(price.strikeout ~ reviews.localizedOverallRating + comparisonModel.starRating + factor(neighborhood), data = hotels)
+hotels_ols = lm(price.lead ~ reviews.localizedOverallRating + 
+                  comparisonModel.starRating + 
+                  factor(neighborhood), 
+                data = hotels)
 
 summary(hotels_ols)
 ```
 
-Running a regression analysis seems also to show that both review rating and star rating are significant factors contributing to the hotel's price (for p<0.01), with a \$68 increase in room rates for every review rating point, and a \$96 increase for every star.
+Running a regression analysis seems also to show that both review rating and star rating are significant factors contributing to the hotel's price (for p<0.01), with a `r str_glue("${format(summary(hotels_ols)$coefficients[2,1], digits = 4)}")` increase in room rates for every review rating point, and a `r str_glue("${format(summary(hotels_ols)$coefficients[3,1], digits = 4)}")` increase for every star.
+
+```{r Regression Analysis Interactions}
+hotels_ols_int = lm(price.lead ~ reviews.localizedOverallRating + 
+                      comparisonModel.starRating + 
+                      reviews.localizedOverallRating * comparisonModel.starRating +
+                      factor(neighborhood), 
+                    data = hotels)
+
+summary(hotels_ols_int)
+```
+
 
 #Expedia destinations  
 
@@ -208,42 +354,18 @@ destinations_sf %>% mutate(colour = case_when(label == "Sensō-ji Temple" ~ "gol
   tm_layout(title = "Expedia Destinations")
 ```
 
-The two destinations Asakusa Shrine and Senso-ji are placed right next to each other. While they are technically two different places, they usually serve as part of the same destination. Two equally strong arguments may be put forth here. On the one hand, since practically every trip made to these locations will always put these destinations within the same trip, one of those destinations should be viewed as a duplicate, as not doing so could lead to an unbalanced desire there. On the other, having two destinations next to each other does not necessarily diminish the satisfaction one derives from going to each place -- so they should not be treated as duplicates.
+The two destinations Asakusa Shrine and Senso-ji are placed right next to each other. While they are technically two different places, they usually serve as part of the same destination. Since practically every trip made to these locations will always put these destinations within the same trip, one of those destinations should be viewed as a duplicate.
 
-#Hexagonal grid
-I am now going to create a hexagonal grid based roughly off the perimeter of the Yamanote Line to denote a gridded area for central Tokyo. The centres of which will be used to calculate accessibility scores.
-```{r Get grid, eval=F}
-q = getbb("Tokyo") %>%
-  opq(timeout = 60) %>%
-  add_osm_feature("route", "train") %>%
-  add_osm_feature("name:en", "JR Yamanote Line (Outer)")
+```{r Remove geographically duplicate destinations}
+destinations_sf = destinations_sf %>% 
+  filter(label != "Asakusa Shrine")
 
-yamanote = osmdata_sf(q)
-yamanote_area = yamanote$osm_lines %>%
-  st_transform(6677) %>% 
-  st_union() %>% 
-  st_convex_hull() %>% 
-  st_buffer(1000)
-yamanote_area_grid = yamanote_area %>% 
-  st_make_grid(square = F, cellsize = 500) %>% 
-  st_sf() %>% 
-  rowid_to_column("grid.id")
-```
-
-```{r Get grid rds}
-yamanote_area_grid = read_rds(here::here("data/yamanote_area_grid.rds"))
-```
-
-```{r Show grid}
-tm_shape(yamanote_area_grid) + tm_polygons(alpha = 0.1) +
-  tm_shape(destinations_sf) + tm_dots(col = "turquoise", size = 0.05) +
-  tm_shape(hotels_sf) + tm_dots(col = "maroon", size = 0.02) +
-  tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
-  tm_layout(title = "Geometries of grid, hotels and destinations")
+destinations = destinations %>% 
+  filter(label != "Asakusa Shrine")
 ```
 
 #Grid statistics  
-In total, `r yamanote_area_grid %>% length()` grid hexagons were created.
+In total, `r yamanote_area_grid %>% length()` grid hexagons were created. The hotels are binned into these grids.
 
 ```{r Distribution of hotels in grid}
 ### the _aggr suffix means that the dataset is aggregated.
@@ -251,29 +373,42 @@ In total, `r yamanote_area_grid %>% length()` grid hexagons were created.
 ### (whatever)
 
 # Zeroes are inconclusive: take away all zero-price hotels
-hotels_sf = hotels_sf %>% filter(price.strikeout > 0)
+# hotels_sf = hotels_sf %>% filter(price.strikeout > 0)
 
 hotels_aggr = st_join(hotels_sf, yamanote_area_grid) %>% 
   replace_na(list(grid.id = -1)) %>% 
   st_set_geometry(NULL) %>% 
   group_by(grid.id) %>% 
-  summarise(price.strikeout.average = mean(price.strikeout),
+  summarise(price.lead.average = mean(price.lead),
+            price.lead.median = median(price.lead),
+            price.lead.sd = sd(price.lead),
             no.hotels = n())
+
 hotels_aggr %>% 
   filter(grid.id > 0) %>% 
+  gather("key", "value", -grid.id, -no.hotels) %>% 
   ggplot() +
-    geom_histogram(aes(x = no.hotels), binwidth = 1)
-  
+    geom_boxplot(aes(key, value)) +
+  scale_x_discrete(labels = c("Average Price", "Median Price", "Standard Deviation")) +
+  theme_minimal() +
+  theme(axis.title = element_blank()) +
+  labs(title = "Distribution of grid prices",
+       subtitle = "Average, median prices and standard deviation") +
+  coord_flip()
 ```
 
-This is the distribution of hotels in the grids. Most grids (80+) have only one hotel in them. The most populous grid has `r max((hotels_aggr %>% filter(grid.id > 0))$no.hotels)`. 209 hotels were not included, due to them falling outside of the city centre zone defined earlier.
+This is the distribution of hotels in the grids. The most populous grid has `r max((hotels_aggr %>% filter(grid.id > 0))$no.hotels)`.
 
 #Grid average prices  
 ```{r Grid average prices}
 yamanote_area_grid %>% 
   left_join(hotels_aggr) %>%
-  select(price.strikeout.average, everything()) %>% 
-  tm_shape() + tm_fill(col = "price.strikeout.average", style = "jenks", colorNA = "#CCCCCC", alpha = 0.6) +
+  select(grid.id, everything()) %>% 
+  tm_shape() + 
+  tm_fill(col = c("price.lead.average", "price.lead.median", "price.lead.sd"), 
+          style = "jenks", 
+          colorNA = "#CCCCCC", 
+          alpha = 0.6) +
   tm_basemap(server = "OpenStreetMap", alpha = 0.4)
 ```
 *Perhaps it would be a good idea to overlay the stations and lines on this.*
