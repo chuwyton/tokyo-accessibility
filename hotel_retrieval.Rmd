@@ -28,6 +28,8 @@ library(curlconverter)
 # library(RSelenium)
 
 tmap_mode("view")
+
+apikey = readLines(here::here("data/apikey.txt"))
 ```
 
 ```{r Prefix Suffix definitions, include=F}
