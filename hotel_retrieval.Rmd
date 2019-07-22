@@ -802,3 +802,42 @@ lm(price.lead ~ reviews.localizedOverallRating +
   summary()
 ```
 
+```{r Grid-based regression with network - Interaction with review rating}
+lm(price.lead ~ reviews.localizedOverallRating +
+     comparisonModel.starRating +
+     duration +
+     reviews.localizedOverallRating * comparisonModel.starRating +
+     duration * reviews.localizedOverallRating,
+   data = hotels_aggr_all) %>% 
+  summary()
+```
+
+```{r Grid-based regression with SLD - Interaction with review rating}
+lm(price.lead ~ reviews.localizedOverallRating +
+     comparisonModel.starRating +
+     dist.average +
+     reviews.localizedOverallRating * comparisonModel.starRating +
+     dist.average * reviews.localizedOverallRating,
+   data = hotels_aggr_all) %>% 
+  summary()
+```
+However, when the accessibility metrics are presumed to interact with the review rating, the significance of those factors become much more significant. Surprisingly using SLD actually gives an even better result, having a p-value of <0.01 (0.007). The average-time metric has a slightly worse result, at 0.016.
+
+
+```{r Grid-based correlations between factors}
+hotels_aggr_all %>% 
+  select(price.lead, 
+         reviews.localizedOverallRating,
+         comparisonModel.starRating,
+         duration,
+         dist.average) %>% 
+  ggpairs()
+```
+
+```{r Grid-based regression - Only star and accessibility}
+lm(price.lead ~ comparisonModel.starRating +
+     dist.average * duration,
+   data = hotels_aggr_all) %>% 
+  summary()
+```
+
