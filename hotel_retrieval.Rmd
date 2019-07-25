@@ -594,7 +594,8 @@ get_itenerary = function(fromY, fromX, toY, toX, fromID, toID) {
                               toPlace   = to_,
                               time      = "6:00pm",
                               date      = "2019-11-06",
-                              maxTransfers = 5)) %>% 
+                              maxTransfers = 5,
+                              numItineraries = 1)) %>% 
     content()
   
   if(is.null(response$plan)) return(NULL)
@@ -609,10 +610,10 @@ get_itenerary = function(fromY, fromX, toY, toX, fromID, toID) {
            leg.routeId  = map(legs, "routeId", .default = NA) %>% unlist(),
            leg.from     = map(legs, "from"),
            leg.to       = map(legs, "to")) %>%
-    mutate(leg.from.stopId = map(leg.from, "stopId", .default = "Origin"),
-           leg.to.stopId   = map(leg.to,   "stopId", .default = "Destination"),
-           leg.from.stopCode = map(leg.from, "stopCode", .default = "none"),
-           leg.to.stopCode   = map(leg.to,   "stopCode", .default = "none")) %>% 
+    mutate(leg.from.stopId = map_chr(leg.from, "stopId", .default = "Origin"),
+           leg.to.stopId   = map_chr(leg.to,   "stopId", .default = "Destination"),
+           leg.from.stopCode = map_chr(leg.from, "stopCode", .default = "none"),
+           leg.to.stopCode   = map_chr(leg.to,   "stopCode", .default = "none")) %>% 
     group_by(option) %>% 
     mutate(leg = row_number()) %>% 
     ungroup() %>% 
@@ -629,18 +630,185 @@ grid_routes = pmap_dfr(list(fromX = fromPlace$X,
                             get_itenerary)
 pb$stop()
 
-# grid_routes = otp_plan(otpcon = otpcon,
-#                        fromPlace = fromPlace,
-#                        toPlace = toPlace,
-#                        fromID = fromPlace$grid.id %>% as.character(),
-#                        toID = toPlace$extrainfo %>% as.character(),
+# test = otp_plan(otpcon = otpcon,
+#                        fromPlace = from %>% slice(1),
+#                        toPlace = to %>% slice(1),
+#                        fromID = from$grid.id[1] %>% as.character(),
+#                        toID = to$extrainfo[1] %>% as.character(),
 #                        mode = c("WALK", "TRANSIT"),
-#                        date_time = as.POSIXct(strptime("2019-06-04 17:00", "%Y-%m-%d %H:%M")),
+#                        date_time = as.POSIXct(strptime("2019-07-23 17:00", "%Y-%m-%d %H:%M")),
 #                        get_geometry = T,
 #                        numItineraries = 1,
 #                        ncores = 4)
 
+# Fares
+fare_response = GET(url = "https://api-tokyochallenge.odpt.org",
+                    path = "api/v4/odpt:RailwayFare.json",
+                    query = list("acl:consumerKey" = apikey))
+fare_content = fare_response %>% content()
+fares = tibble(from.station = map_chr(fare_content, "odpt:fromStation", .default = NA),
+               to.station   = map_chr(fare_content, "odpt:toStation",   .default = NA),
+               ticket.fare  = map_dbl(fare_content, "odpt:ticketFare",  .default = NA)) %>% 
+  mutate_at(vars(-ticket.fare), ~map_chr(.x, ~str_split(.x, ":")[[1]][2]))
+
+
+# getFare = function(fromStation, toStation) {
+#   response = GET(url = "https://api-tokyochallenge.odpt.org",
+#                path = "api/v4/odpt:RailwayFare",
+#                query = list("acl:consumerKey" = apikey,
+#                             "odpt:fromStation" = "odpt.Station:Toei.Oedo.Ryogoku",
+#                             "odpt:toStation" = "odpt.Station:Toei.Asakusa.Asakusa"))
+#   content = response %>% content()
+#   if(length(content) < 1)
+#     return(NA)
+#   else
+#     return(content[[1]]$`odpt:ticketFare`)
+# }
+
+getFare = function(agency, fromStation, toStation, distance, yamanote_only){
+  if(agency == "JR-East") {
+    # The total distance given is straight-line,
+    # we are assuming that is a good estimation for
+    # the actual distance
+    
+    # Max distance from a sample dataset is 42.5km
+    # Lay out prices until 50.0km
+    if(yamanote_only) {
+      currentFare = case_when(distance <= 3000   ~ 140,
+                              distance <= 6000   ~ 160,
+                              distance <= 10000  ~ 170,
+                              distance <= 15000  ~ 200,
+                              distance <= 20000  ~ 260)
+    } else {
+      # Assume inside special area
+      currentFare = case_when(distance <= 3000   ~ 140,
+                              distance <= 6000   ~ 160,
+                              distance <= 10000  ~ 170,
+                              distance <= 15000  ~ 220,
+                              distance <= 20000  ~ 310,
+                              distance <= 25000  ~ 390,
+                              distance <= 30000  ~ 470,
+                              distance <= 35000  ~ 550,
+                              distance <= 40000  ~ 640,
+                              distance <= 45000  ~ 720,
+                              TRUE               ~ 800)
+    }
+  } else if (agency %in% c("Keikyu",
+                           "Keio",
+                           "Keisei",
+                           "Odakyu",
+                           "Seibu",
+                           "Tobu",
+                           "Toei",
+                           "TokyoMetro",
+                           "Tokyu",
+                           "TWR",
+                           "Yurikamome")) {
+    # These can be fetched from the fares dataset
+    # Assume that there is only one entry
+    currentFare = filter(fares, 
+                         from.station == fromStation, 
+                         to.station == toStation)$ticket.fare[1]
+  } else {
+    # Something is wrong: report
+    warning(str_glue("Fare for {fromStation} to {toStation} has a problem. Returning NA"))
+    currentFare = NA
+  }
+  
+  return(currentFare)
+}
+getFareFromLegs = function(legs) {
+  fare = 0
+  previousAgency = ""
+  yamanote_only = F
+  distance = 0
+  boardingStation = ""
+  alightingStation = ""
+  for(i in 1:length(legs)) {
+    leg = legs[[i]]
+    
+    if(leg$mode == "RAIL") {
+      # taking the train, take note of distance travelled and 
+      # agency
+      currentStation = leg$from$stopId %>% str_extract("(?<=\\d:).*$")
+      currentAgency = currentStation %>% str_split("\\.") %>% `[[`(1) %>% `[`(1)
+      currentLine = currentStation %>% str_split("\\.") %>% `[[`(1)%>% `[`(2)
+      # Don't set the boarding or alighting station here -- we need that information
+      # From the last leg once the code detects a transfer
+      # and that transfer can happen after a WALK leg
+      
+      # This line will be skipped if yamanote is the only journey on the leg
+      if(currentLine != "Yamanote") yamanote_only = F
+      
+      if(currentAgency == previousAgency || previousAgency == "") {
+        # Don't do anything; just take note of distance
+        distance = distance + leg$distance
+        
+      } else {
+        currentFare = getFare(previousAgency, boardingStation, alightingStation, distance, yamanote_only)
+        
+        #Add the current fare to the total fare
+        fare = fare + currentFare
+        
+        #Reset the previous leg's boarding station
+        boardingStation = ""
+        
+        #restart recording distance (including this trip!)
+        distance = leg$distance
+      }
+      
+      # Now that all the processing is done, we can refresh the boarding and alighting station
+      if(boardingStation == "") {
+        # Start of a trip section (either first train or after interchange)
+        boardingStation = currentStation
+        
+        # And if it is the Yamanote line, prepare for Yamanote line-only fare
+        if(currentLine == "Yamanote") yamanote_only = T
+      }
+      alightingStation = leg$to$stopId %>% str_extract("(?<=\\d:).*$")
+      previousAgency = currentAgency
+    }
+    
+    if(leg$mode == "WALK" & i == length(legs)) {
+      # Last leg; add the fare for the last trip
+      currentFare = getFare(previousAgency, boardingStation, alightingStation, distance, yamanote_only)
+      fare = fare + currentFare
+    }
+  }
+  
+  return(fare)
+}
+
+
+
+grid_routes %>% 
+  mutate(leg.from.station = str_extract(leg.from.stopId, "(?<=\\d:).*$"),
+         leg.to.station   = str_extract(leg.to.stopId,   "(?<=\\d:).*$")) %>% 
+  mutate(leg.from.agency = map_chr(leg.from.station, ~str_split(.x, "\\.")[[1]][1]),
+         leg.to.agency   = map_chr(leg.to.station,   ~str_split(.x, "\\.")[[1]][1])) %>% 
+  left_join(fares, by = c("leg.from.station" = "from.station", "leg.to.station" = "to.station")) %>% 
+  mutate(ticket.fare = case_when(leg.mode != "RAIL" ~ 0,
+                                 TRUE ~ ticket.fare)) %>% 
+  rename(leg.fare = ticket.fare) %>% 
+  group_by(fromID, toID, option) %>% 
+  summarise(duration = first(duration),
+            startTime = first(startTime),
+            endTime = first(endTime),
+            walkTime = first(walkTime),
+            transitTime = first(transitTime),
+            waitingTime = first(waitingTime),
+            walkDistance = first(walkDistance),
+            walkLimitExceeded = first(walkLimitExceeded),
+            transfers = first(transfers),
+            distance = sum(leg.distance),
+            fare = getFareFromLegs(legs)) %>% 
+  select(fromID, toID, option, duration, distance, fare, transfers)
+
+
 grid_routes_all_vars = grid_routes
+
+
+
 ```
 
 ```{r Accessibility of grids rds}
