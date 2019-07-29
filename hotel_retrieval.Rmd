@@ -479,7 +479,7 @@ We see first that hotels tend to cluster around the main JR routes (Yamanote, Ke
 
 #Spatial Autocorrelation
 
-*Explain spatial autocorrelation here*
+Spatial autocorrelation is a measure of how much data points are affected by those around them. In the following sections, I'm going to check the average of hotel prices of each grid's surroundings, and also run a Moran Test. A Moran's Test tells us how much clustering of similar values there are in a spatial dataset.
 
 ```{r Spatial Autocorrelation (Neighbours), eval=F, include=F}
 hotels_aggr_sp = as(hotels_aggr_sf %>% filter(!is.na(price.lead.average)), "Spatial")
@@ -514,7 +514,7 @@ There seems to be a correlation between grid average room rates and those of the
 moran.test(hotels_aggr_sp$price.lead.average, hotels_wt, zero.policy = T)
 ```
 
-*Here we see that there is a just-strong-enough correlation to suspect some spatial factor?*
+Here we see that there is a just-strong-enough correlation to suspect some spatial factor.
 
 ##Local Moran
 *To look at the local amount of clustering*
@@ -781,7 +781,7 @@ getFareFromLegs = function(legs) {
 
 
 
-grid_routes %>% 
+grid_routes = grid_routes %>% 
   mutate(leg.from.station = str_extract(leg.from.stopId, "(?<=\\d:).*$"),
          leg.to.station   = str_extract(leg.to.stopId,   "(?<=\\d:).*$")) %>% 
   mutate(leg.from.agency = map_chr(leg.from.station, ~str_split(.x, "\\.")[[1]][1]),
@@ -801,23 +801,17 @@ grid_routes %>%
             walkLimitExceeded = first(walkLimitExceeded),
             transfers = first(transfers),
             distance = sum(leg.distance),
-            fare = getFareFromLegs(legs)) %>% 
-  select(fromID, toID, option, duration, distance, fare, transfers)
+            fare = getFareFromLegs(legs))
 
 
 grid_routes_all_vars = grid_routes
-
-
-
 ```
 
-```{r Accessibility of grids rds}
+```{r Accessibility of grids rds, include=F}
 grid_routes_all_vars = read_rds(here::here("data/grid_routes_all_vars.rds"))
-grid_routes_all_vars %>% 
-  select(fromID, toID, duration,
-         option, walkTime, transitTime, waitingTime, walkDistance, transfers,
-         leg, leg.from.stopId, leg.to.stopId, leg.mode, leg.distance) %>% 
-  mutate_at(vars(leg.from.stopId, leg.to.stopId, leg.mode, leg.distance), unlist)
+grid_routes = grid_routes_all_vars %>% 
+  select(fromPlace = fromID, toPlace = toID, duration,
+         option, transfers, distance, fare)
 
 from = read_rds(here::here("data/from.rds"))
 to = read_rds(here::here("data/to.rds"))
@@ -842,7 +836,7 @@ tm_shape(grid_missing) + tm_dots(col = "maroon", title = "Missing grids") +
   tm_layout(title = "Missing geometries")
 ```
 
-```{r Tracemap}
+```{r Tracemap, eval=F, include=F}
 ### dataisbeautiful
 trace_routes = grid_routes %>% 
   st_zm() %>% 
@@ -857,9 +851,9 @@ tm_shape(trace_routes) +
 
 ```{r Average times}
 grid_aggr_time = grid_routes %>% 
-  st_set_geometry(NULL) %>% 
-  group_by(fromPlace, toPlace) %>% 
-  summarise(duration = first(duration)) %>% 
+  # st_set_geometry(NULL) %>% 
+  # group_by(fromPlace, toPlace) %>% 
+  # summarise(duration = first(duration)) %>% 
   group_by(fromPlace) %>%
   summarise(duration = mean(duration)/60) %>% 
   mutate(fromPlace = as.integer(fromPlace)) %>% 
@@ -873,6 +867,25 @@ tm_shape(grid_aggr_time) +
   tm_base
 ```
 very subtle patterns can be seen here. For example, Tokyo has a high level of accessibility, and this high level emanates from Tokyo through the two main JR line-clusters: the Tokaido Line-Tohoku Line cluster (Blue Line; Keihin-Tohoku; N-S), and the Chuo Line cluster (Orange line; Chuo; E-W). Some grids have very good accessibility because one of the destinations is in the grid. This shows that the averaging method may be too biased towards grids which are close to one attraction.
+
+```{r Average ticket prices}
+# This was created with the new implementation of get_itinerary, which has already
+# output a summarised version (only option 1), and doesn't contain geometry.
+
+grid_aggr_fare = grid_routes %>% 
+  group_by(fromPlace) %>% 
+  summarise(fare = mean(fare)) %>% 
+  mutate(fromPlace = as.integer(fromPlace)) %>% 
+  right_join(yamanote_area_grid, by = c("fromPlace" = "grid.id")) %>% 
+  select(fare, everything()) %>% 
+  st_as_sf()
+
+tm_shape(grid_aggr_fare) +
+  tm_fill(col = "fare", style = "jenks", n = 10, palette = "-inferno", alpha = 0.7) +
+  tm_layout(title = "Accessibility of grid-centres by mean fare") +
+  tm_base
+```
+*A large chunk of fares is unavailable for the middle section, and most worryingly around the Shinjuku area. Need to check implementation.*
 
 ```{r Average SLD}
 # straight-line distance
@@ -891,12 +904,9 @@ Since the idea of using straight-line distance stems from the hypothesis that do
 
 ```{r Average speed, Average time, Difference in estimation}
 grid_aggr_speed = grid_routes %>% 
-  st_set_geometry(NULL) %>% 
-  group_by(fromPlace, toPlace) %>% 
-  summarise(duration = first(duration),
-            walkDistance = first(walkDistance),
-            distance = sum(distance)) %>% 
-  mutate(speed = (walkDistance + distance)/(duration/60)) %>% 
+  # st_set_geometry(NULL) %>% 
+  group_by(fromPlace, toPlace) %>%
+  mutate(speed = distance/(duration/60)) %>% 
   group_by(fromPlace) %>% 
   summarise(speed = mean(speed)) %>% 
   mutate(fromPlace = as.integer(fromPlace)) %>% 
@@ -932,7 +942,8 @@ hotels_aggr_all = hotels_sf %>% st_join(yamanote_area_grid) %>%
                     reviews.localizedOverallRating, 
                     comparisonModel.starRating),
                mean) %>% 
-  left_join(grid_aggr_estimation_diff %>% st_set_geometry(NULL), by = c("grid.id" = "fromPlace"))
+  left_join(grid_aggr_estimation_diff %>% st_set_geometry(NULL), by = c("grid.id" = "fromPlace")) %>% 
+  left_join(grid_aggr_fare %>% st_set_geometry(NULL), by = c("grid.id" = "fromPlace"))
 
 lm(price.lead ~ reviews.localizedOverallRating + 
      comparisonModel.starRating +
@@ -960,7 +971,8 @@ lm(price.lead ~ reviews.localizedOverallRating +
   data = hotels_aggr_all) %>% 
   summary()
 ```
-Although the additional factor isn't significant, the model does improve slightly more than for the straight-line distance case. 
+Although the additional factor isn't significant, the model does improve slightly more than for the straight-line distance case.
+
 ```{r Grid-based regression on time-SLD}
 lm(price.lead ~ reviews.localizedOverallRating + 
     comparisonModel.starRating +
@@ -969,6 +981,7 @@ lm(price.lead ~ reviews.localizedOverallRating +
   data = hotels_aggr_all) %>% 
   summary()
 ```
+Including the average speed to turn the SLD into a straight-line "time" metric improves the correlation *just* slightly.
 
 ```{r Grid-based regression with network - Interaction with review rating}
 lm(price.lead ~ reviews.localizedOverallRating +
@@ -991,15 +1004,34 @@ lm(price.lead ~ reviews.localizedOverallRating +
 ```
 However, when the accessibility metrics are presumed to interact with the review rating, the significance of those factors become much more significant. Surprisingly using SLD actually gives an even better result, having a p-value of <0.01 (0.007). The average-time metric has a slightly worse result, at 0.016.
 
+```{r}
+lm(price.lead ~ reviews.localizedOverallRating +
+     comparisonModel.starRating +
+     duration * reviews.localizedOverallRating * fare,
+   data = hotels_aggr_all) %>% 
+  summary()
+
+#R^2 0.7411 adj .7115
+```
+If we add fares into the model, and interact it with both average time and review rating, the model improves insofar as the R-squared metrics increase substantially, to 0.74. The significance of locational factors also improves drastically (to 0.5% ~ 0.1% p-values). The two factors which don't meet the <1% p-value significance are duration-fare -- perhaps it shows that different lines operate at different speeds, and so the time taken (for the same price, as price is mainly controlled by distance) is not the same for every line -- and review rating-duration-fare.
+
 
 ```{r Grid-based correlations between factors}
+gg_collm = function(data, mapping, ...) {
+  p = ggplot(data = data, mapping = mapping) +
+    geom_point() +
+    geom_smooth(method = lm, fill = "blue", colour = "blue", ...)
+  p
+}
+
 hotels_aggr_all %>% 
   select(price.lead, 
          reviews.localizedOverallRating,
          comparisonModel.starRating,
          duration,
-         dist.average) %>% 
-  ggpairs()
+         dist.average,
+         fare) %>% 
+  ggpairs(lower = list(continuous = gg_collm))
 ```
 
 ```{r Grid-based regression - Only star and accessibility}
