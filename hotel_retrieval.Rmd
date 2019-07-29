@@ -583,7 +583,7 @@ toPlace = to %>% st_coordinates() %>% as_tibble() %>% mutate(toID = to$extrainfo
 
 pb = progress_estimated(nrow(toPlace), 5)
 
-get_itenerary = function(fromY, fromX, toY, toX, fromID, toID) {
+get_itinerary = function(fromY, fromX, toY, toX, fromID, toID) {
   if(!is.null(pb)) pb$tick()$print()
   from_ = str_glue("{fromY},{fromX}")
   to_   = str_glue("{toY},{toX}")
@@ -627,7 +627,7 @@ grid_routes = pmap_dfr(list(fromX = fromPlace$X,
                             toY   = toPlace$Y,
                             fromID= fromPlace$fromID,
                             toID  = toPlace$toID),
-                            get_itenerary)
+                            get_itinerary)
 pb$stop()
 
 # test = otp_plan(otpcon = otpcon,
@@ -781,7 +781,7 @@ getFareFromLegs = function(legs) {
 
 
 
-grid_routes = grid_routes %>% 
+grid_routes_all_vars = grid_routes %>% 
   mutate(leg.from.station = str_extract(leg.from.stopId, "(?<=\\d:).*$"),
          leg.to.station   = str_extract(leg.to.stopId,   "(?<=\\d:).*$")) %>% 
   mutate(leg.from.agency = map_chr(leg.from.station, ~str_split(.x, "\\.")[[1]][1]),
@@ -802,9 +802,6 @@ grid_routes = grid_routes %>%
             transfers = first(transfers),
             distance = sum(leg.distance),
             fare = getFareFromLegs(legs))
-
-
-grid_routes_all_vars = grid_routes
 ```
 
 ```{r Accessibility of grids rds, include=F}
