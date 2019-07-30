@@ -769,7 +769,10 @@ getFareFromLegs = function(legs) {
       previousAgency = currentAgency
     }
     
-    if(leg$mode == "WALK" & i == length(legs)) {
+    if(leg$mode == "WALK" & i == length(legs) & i != 1) {
+      # if i is 1 then it means the trip is done purely by walking
+      # and we shouldn't do anything; fare defaults to 0
+      
       # Last leg; add the fare for the last trip
       currentFare = getFare(previousAgency, boardingStation, alightingStation, distance, yamanote_only)
       fare = fare + currentFare
