@@ -819,7 +819,7 @@ fromPlace = read_rds(here::here("data/fromPlace.rds"))
 toPlace = read_rds(here::here("data/toPlace.rds"))
 ```
 
-```{r Investigate routes}
+```{r Investigate routes, eval=F, include=F}
 # missing destinations/grids: which?
 
 grid_missing = from %>% 

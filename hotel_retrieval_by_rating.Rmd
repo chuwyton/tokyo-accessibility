@@ -1,0 +1,316 @@
+---
+title: "R Notebook"
+output: Hotel Review Analysis
+---
+
+After the discussion on Week 11, both Ate and I thought it would be a good idea to correlate against review rather than price. This actually seems more intuitive because the "worth it-ness" of the hotel can be directly measured by review ratings rather than using price as an intermediary. 
+
+```{r Setup}
+library(tidyverse)
+library(sf)
+library(spdep)
+library(tmap)
+library(ggmap)
+library(GGally)
+library(opentripplanner)
+```
+
+```{r Prefix Suffix definitions, include=F}
+######## SUFFIXES
+### _aggr: the dataset that this variable points to is aggregated.
+### _lite: lite version, with only a select number of columns.
+###        this is used usually exclusively to prep data for drawing, not actually to cull columns.
+```
+
+```{r Data}
+hotels = read_rds(here::here("data/hotels.rds"))
+
+yamanote_sf     = read_rds(here::here("data/yamanote_sf.rds"))
+chuo_sf         = read_rds(here::here("data/chuo_sf.rds"))
+keihintohoku_sf = read_rds(here::here("data/keihintohoku_sf.rds"))
+
+yamanote_area = yamanote_sf %>% 
+  st_union() %>% 
+  st_convex_hull() %>% 
+  st_buffer(1000)
+
+yamanote_area_grid = yamanote_area %>% 
+  st_make_grid(square = F, cellsize = 500) %>% 
+  st_sf() %>% 
+  rowid_to_column("grid.id")
+
+lines_sf = rbind(yamanote_sf, chuo_sf, keihintohoku_sf) %>% 
+  st_join(yamanote_area_grid) %>% 
+  na.omit() %>% 
+  mutate(col = case_when(name.en == "Yamanote Line"      ~ "#80c241",
+                         name.en == "JR Chuo Line"       ~ "#f15a22",
+                         name.en == "Chuo Line"          ~ "#f15a22",
+                         name.en == "Keihin-Tohoku Line" ~ "#00b2e5"))
+
+tm_base = tm_shape(lines_sf) +
+  tm_sf(col = "col", alpha = 0.4) +
+  tm_basemap(server = "OpenStreetMap", alpha = 0.4)
+
+destinations_sf = read_rds(here::here("data/destinations_sf.rds"))
+destinations_sf = destinations_sf %>% 
+  filter(label != "Asakusa Shrine")
+destinations = destinations_sf %>% 
+  st_set_geometry(NULL)
+
+grid_routes_all_vars = read_rds(here::here("data/grid_routes_all_vars.rds"))
+```
+
+#Non-Spatial Analysis
+```{r Prune hotels to yamanote area}
+# Check inclusion
+hotels_sf = hotels %>% 
+  select(hotelName, everything()) %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 6668) %>% 
+  st_transform(6677)
+
+hotels_sf = hotels_sf %>% 
+  mutate(within.boundary = st_within(., yamanote_area_grid) %>% lengths()) %>% 
+  mutate(within.boundary = ifelse(within.boundary == 0, "No", "Yes"))
+
+# tm_shape(yamanote_area_grid) +
+#   tm_fill(col = "grey", alpha = 0.4) +
+#   tm_shape(hotels_sf) +
+#   tm_dots(col = "within.boundary", title="Falls within boundary") +
+#   tm_layout(title = "Inclusion of hotels") +
+#   tm_base
+
+# include only those in the yamanote region.
+
+hotels_sf = hotels_sf %>% filter(within.boundary == "Yes")
+hotels = hotels_sf %>% st_set_geometry(NULL)
+```
+
+```{r}
+hotels_lite = hotels %>% 
+  select(reviews.localizedOverallRating, price.lead, comparisonModel.starRating) %>% 
+  mutate(comparisonModel.starRating = as.ordered(comparisonModel.starRating))
+ggpairs(data = hotels_lite,
+        upper = list(continuous = "density"),
+        lower = list(continuous = "smooth",
+                     combo = "dot_no_facet"))
+```
+
+Comparing the distributions of the factors of price, star rating and review rating, we see that there is a strong correlation between review rating and price, as well as between star rating and price. There is a moderately strong correlation between star rating and review rating -- the variance in review rating seems to go down as the star rating improves.
+
+```{r Spatial distribution of review rating}
+hotels_sf %>% 
+  tm_shape() + 
+  tm_dots(col = "reviews.localizedOverallRating", style="jenks", n = 6) +
+  tm_base
+```
+There is a good mix of "good" and "average" hotels, but there is a slight density of hotels with higher review ratings, such as from Shimbashi to Ueno. This hints that some spatial autocorrelation might be present.
+
+```{r Non-spatial regression without interaction}
+hotels_ols = lm(reviews.localizedOverallRating ~ price.lead + 
+                  comparisonModel.starRating, 
+                data = hotels)
+
+summary(hotels_ols)
+```
+By running an ordinary least-squares regression on the data, correlating the review rating to price and star rating, we see that price strongly correlates with the review, but the star rating doesn't. The R-squared value isn't very high either -- at only 17.3%, meaning that overall the factors in the model are not enough to explain the variances in review ratings. Something else could be at work.
+
+```{r Non-spatial regression without interaction}
+hotels_ols_int = lm(reviews.localizedOverallRating ~ price.lead * comparisonModel.starRating, 
+                    data = hotels)
+
+summary(hotels_ols_int)
+```
+The model improves a little (the R-squared statistic rises to 19.7%) if the price and the star rating interacts with each other. Of interest is that this interaction is negative -- a rise in both the price and the star rating leads to a very slight decrease in the review rating. The values for the rest of the factors are just as slight -- it takes about a 300-dollar increase in price for the review rating to rise by 1.0, and this is per person, per night we're talking about.
+
+```{r Residuals}
+hotels_sf %>% 
+  mutate(.resid = hotels_ols_int$residuals) %>% 
+  tm_shape() +
+  tm_dots(col = ".resid", style = "jenks", n = 6) +
+  tm_base
+```
+As with the spatial distribution with the review ratings, clustering is evident in the residuals for these review ratings. For example, there is generally a positive residual for hotels near the Tokyo station area.
+
+#Spatial Analysis  
+By cutting the area within the yamanote line into a 500m-hexagon grid, 530 areas were created. The hotel attributes are then averaged for each area.
+
+```{r Distribution of hotels in grid}
+hotels_aggr = st_join(hotels_sf, yamanote_area_grid) %>% 
+  replace_na(list(grid.id = -1)) %>% 
+  st_set_geometry(NULL) %>% 
+  group_by(grid.id) %>% 
+  summarise(review.average = mean(reviews.localizedOverallRating),
+            review.median = median(reviews.localizedOverallRating),
+            review.sd = sd(reviews.localizedOverallRating),
+            price.lead.average = mean(price.lead),
+            price.lead.median = median(price.lead),
+            price.lead.sd = sd(price.lead),
+            star.average = mean(comparisonModel.starRating),
+            star.median = median(comparisonModel.starRating),
+            star.sd = sd(comparisonModel.starRating),
+            no.hotels = n())
+
+hotels_aggr_sf = yamanote_area_grid %>% 
+  left_join(hotels_aggr)
+
+hotels_aggr %>% 
+  filter(grid.id > 0) %>% 
+  select(grid.id, review.average, review.median, review.sd) %>% 
+  gather("key", "value", -grid.id) %>% 
+  ggplot() +
+    geom_boxplot(aes(key, value)) +
+  scale_x_discrete(labels = c("Average", "Median", "Standard Deviation")) +
+  theme_minimal() +
+  theme(axis.title = element_blank()) +
+  labs(title = "Distribution of grid review ratings",
+       subtitle = "Average, median and standard deviation") +
+  coord_flip()
+```
+
+##Grid average review ratings 
+```{r Grid average prices}
+hotels_aggr_sf %>%
+  select(grid.id, everything()) %>% 
+  tm_shape() + 
+  tm_fill(col = c("review.average", "review.median", "review.sd"), 
+          style = "jenks", 
+          colorNA = "#CCCCCC", 
+          alpha = 0.6) +
+  tm_layout(title = "Grid average room price") +
+  tm_base
+```
+Again we see some clustering of review prices, even when they are averaged, over major stations such as Tokyo, Shinagawa. There is less evidence of such clustering happening at Shinjuku and Shinagawa however.
+
+##Spatial Autocorrelation  
+Spatial autocorrelation is a measure of how much data points are affected by those around them. In the following sections, I'm going to check the average of hotel prices of each grid's surroundings, and also run a Moran Test. A Moran's Test tells us how much clustering of similar values there are in a spatial dataset.
+
+```{r Spatial Autocorrelation (Distance)}
+hotels_aggr_sp = as(hotels_aggr_sf %>% filter(!is.na(review.average)) %>% st_centroid(), "Spatial")
+
+hotels_nb = dnearneigh(hotels_aggr_sp, 0, 1000, hotels_aggr_sp$grid.id)
+hotels_gl = nbdists(hotels_nb, hotels_aggr_sp)
+
+hotels_wt = nb2listw(hotels_nb, glist = hotels_gl, style = "W", zero.policy = T)
+
+hotels_lag = lag.listw(hotels_wt, hotels_aggr_sp$review.average)
+
+ggplot() +
+  geom_point(aes(x = hotels_aggr_sp$review.average, y = hotels_lag))
+```
+There is a hint that the review ratings around a grid is correlated to the review ratings of the grid itself. In this case, a distance of 1000m was taken to be the "area of influence".
+
+##Moran's I
+```{r Moran}
+hotels_aggr_moran = moran.test(hotels_aggr_sp$review.average, hotels_wt, zero.policy = T)
+
+hotels_aggr_moran
+```
+At 95% confidence (*?*) the moran's test does indicate that the reviews are spatially autocorrelated.
+
+##Residuals
+We can also run an OLSR on the averaged dataset, and then plot the residuals:
+```{r regression over average grid}
+hotels_aggr_ols = lm(review.average ~ price.lead.average * star.average,
+                     data = hotels_aggr)
+
+summary(hotels_aggr_ols)
+```
+```{r residuals of average grid ols}
+hotels_aggr_sf %>% 
+  filter(!is.na(review.average)) %>% 
+  mutate(.resid = hotels_aggr_ols$residuals) %>% 
+  tm_shape() +
+  tm_fill(col=".resid", style="jenks", n=6, alpha=0.7) +
+  tm_base
+```
+After averaging out the prices over the grids, the regression model deproves further -- this is expected as there can be different "levels" (in price, star rating, etc.) of hotels in the same area, and those differences are averaged out. There is also some clustering happening within the residuals generated by the model.
+
+##Local Moran
+Moran's I can also be localized to see differences in levels of clustering at different areas.
+```{r moran local clustering}
+moran_local = localmoran(hotels_aggr_sp$review.average, hotels_wt, zero.policy = T)
+hotels_aggr_sp %>% 
+  st_as_sf() %>%
+  mutate("moran.local" = moran_local[,1]) %>%
+  st_set_geometry(NULL) %>% 
+  select(grid.id, moran.local) %>% 
+  left_join(hotels_aggr_sf, .) %>% 
+  tm_shape() +
+    tm_fill(col = "moran.local", style = "jenks", palette = "-RdBu", colorNA = "#CCCCCC", alpha = 0.8) +
+    tm_layout(title = "LISA (local clustering)") +
+  tm_base
+```
+
+```{r Regression with utility-based accessibility}
+grid_routes = grid_routes_all_vars %>% 
+  group_by(fromID) %>% 
+  mutate(speed = distance/(duration/60)) %>% 
+  summarise(duration.all = mean(duration),
+            speed.all = mean(speed),
+            fare.all = mean(fare),
+            transfers.all = mean(transfers),
+            
+            duration.top5.d = sort(duration)[1:5] %>% mean(),
+            speed.top5.d = speed[order(duration)[1:5]] %>% mean(),
+            fare.top5.d = fare[order(duration)[1:5]] %>% mean(),
+            transfers.top5.d = transfers[order(duration)[1:5]] %>% mean()) %>% 
+  rename(grid.id = fromID) %>% 
+  left_join(yamanote_area_grid) %>% # re-introduce grid spatial data
+  st_as_sf(crs = 6677) %>% 
+  st_centroid() %>% 
+  mutate(distance.sld.all = st_distance(., destinations_sf, by_element = F) %>% rowMeans(),
+         distance.sld.top5 = (st_distance(., destinations_sf, by_element = F) %>%  
+           apply(1, sort))[1:5,] %>% t() %>% rowMeans()) %>% 
+  st_set_geometry(NULL) %>% # No need for spatial data anymore
+  mutate(time.sld.all = distance.sld.all/speed.all,
+         time.sld.top5 = distance.sld.top5/speed.top5.d)
+
+hotels_aggr_all = hotels_aggr %>% 
+  select(grid.id, review.average, price.lead.average, star.average) %>% 
+  inner_join(grid_routes)
+
+# test tmap
+tm_shape(hotels_aggr_all %>% left_join(yamanote_area_grid) %>% st_as_sf(crs=6677)) +
+  tm_fill(col=c("duration.top5.d", "duration.all", "review.average"), style="jenks", n=6, alpha=0.7) +
+  tm_shape(destinations_sf) +
+  tm_dots(col="red") +
+  tm_base
+
+# should I put both metrics in?
+# hotels_aggr_all_ols = lm(review.average ~ price.lead.average * star.average +
+#                            duration.all +
+#                            fare.all +
+#                            transfers.all,
+#                      data = hotels_aggr_all)
+
+hotels_aggr_all_ols = lm(review.average ~ price.lead.average * star.average +
+                           duration.top5.d +
+                           fare.top5.d +
+                           transfers.top5.d,
+                     data = hotels_aggr_all)
+
+summary(hotels_aggr_all_ols)
+```
+
+```{r Residuals of regression with utility-based accessibility}
+hotels_aggr_all %>%
+  mutate(.resid = hotels_aggr_all_ols$residuals) %>% 
+  left_join(yamanote_area_grid) %>% 
+  st_as_sf(crs = 6677) %>% 
+  tm_shape() +
+    tm_fill(col=".resid", style="jenks", n=6, alpha = 0.7) +
+  tm_shape(destinations_sf) +
+    tm_dots(col="red") +
+    tm_base
+```
+
+
+```{r Regression with straight-line distance accessibility}
+hotels_aggr_all_ols_sld = lm(review.average ~ price.lead.average * star.average +
+                               distance +
+                               time.sld,
+                             data = hotels_aggr_all)
+summary(hotels_aggr_all_ols_sld)
+```
+
+
