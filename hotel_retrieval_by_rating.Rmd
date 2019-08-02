@@ -418,7 +418,7 @@ bandwidth = gwr.sel(review.average ~
                       fare.avg +
                       transfers.avg,
                     data=hotels_aggr_all_sp,
-                    adapt=T)
+                    adapt=F)
 
 gwr.model = gwr(review.average ~ 
                       price.lead.average * star.average +
