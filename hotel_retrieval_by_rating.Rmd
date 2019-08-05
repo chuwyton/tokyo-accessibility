@@ -11,6 +11,7 @@ After the discussion on Week 11, both Ate and I thought it would be a good idea 
 library(tidyverse)
 library(sf)
 library(spdep)
+library(spgwr)
 library(tmap)
 library(ggmap)
 library(GGally)
@@ -62,6 +63,9 @@ destinations_sf = destinations_sf %>%
   filter(label != "Asakusa Shrine")
 destinations = destinations_sf %>% 
   st_set_geometry(NULL)
+
+fromPlace = read_rds(here::here("data/fromPlace.rds")) %>% st_as_sf(coords = c("X", "Y")) %>% st_set_crs(4326)
+toPlace = read_rds(here::here("data/toPlace.rds")) %>% st_as_sf(coords = c("X", "Y")) %>% st_set_crs(4326)
 
 grid_routes_all_vars = read_rds(here::here("data/grid_routes_all_vars.rds"))
 ```
@@ -250,59 +254,70 @@ hotels_aggr_sp %>%
 ```
 
 ```{r Regression with utility-based accessibility}
-grid_routes = grid_routes_all_vars %>% 
-  group_by(fromID) %>% 
-  mutate(speed = distance/(duration/60)) %>% 
-  summarise(duration.all = mean(duration),
-            speed.all = mean(speed),
-            fare.all = mean(fare),
-            transfers.all = mean(transfers),
-            
-            duration.top5.d = sort(duration)[1:5] %>% mean(),
-            speed.top5.d = speed[order(duration)[1:5]] %>% mean(),
-            fare.top5.d = fare[order(duration)[1:5]] %>% mean(),
-            transfers.top5.d = transfers[order(duration)[1:5]] %>% mean()) %>% 
-  rename(grid.id = fromID) %>% 
-  left_join(yamanote_area_grid) %>% # re-introduce grid spatial data
-  st_as_sf(crs = 6677) %>% 
-  st_centroid() %>% 
-  mutate(distance.sld.all = st_distance(., destinations_sf, by_element = F) %>% rowMeans(),
-         distance.sld.top5 = (st_distance(., destinations_sf, by_element = F) %>%  
-           apply(1, sort))[1:5,] %>% t() %>% rowMeans()) %>% 
-  st_set_geometry(NULL) %>% # No need for spatial data anymore
-  mutate(time.sld.all = distance.sld.all/speed.all,
-         time.sld.top5 = distance.sld.top5/speed.top5.d)
+get_topn_avg_ols = function(gr, n) {
+  # gr_ = gr %>%
+  #   group_by(fromID) %>%
+  #   summarise(duration.avg = sort(duration)[1:n] %>% mean(),
+  #             fare.avg = fare[order(duration)[1:n]] %>% mean(),
+  #             transfers.avg = transfers[order(duration)[1:n]] %>% mean()) %>% 
+  #   rename(grid.id = fromID)
+  
+  gr_ = gr %>% 
+    group_by(fromID) %>% 
+    summarise_at(c("duration", "fare", "transfers"),
+                 list(avg = ~.x[order(duration)[1:n]] %>% mean())) %>% 
+    rename_at(vars(contains("_")), ~str_replace_all(.x, "_", ".")) %>% 
+    rename(grid.id = fromID)
+  
+  h_aggr = hotels_aggr %>%
+    select(grid.id, review.average, price.lead.average, star.average) %>% 
+    inner_join(gr_)
+  
+  if(nrow(h_aggr %>% na.omit()) == 0) warning(str_glue("for n={n} no cases left"))
+  
+  ols = lm(review.average ~ price.lead.average * star.average +
+             duration.avg + fare.avg + transfers.avg,
+           data = h_aggr)
+  return(ols)
+}
 
-hotels_aggr_all = hotels_aggr %>% 
-  select(grid.id, review.average, price.lead.average, star.average) %>% 
-  inner_join(grid_routes)
+hotels_aggr_all_ols = map(1:17, ~get_topn_avg_ols(grid_routes_all_vars, .x))
+
+# plot significance by average top n model
+map2_dfr(hotels_aggr_all_ols, 1:17, 
+         ~summary(.x)$coefficients %>% 
+           as_tibble(rownames = "Coefficient") %>% 
+           mutate(top = .y)) %>% 
+  filter(Coefficient != "(Intercept)") %>% 
+  ggplot() +
+    geom_line(aes(x = top, y = `Pr(>|t|)`, col = Coefficient)) +
+    theme_minimal() +
+    scale_x_continuous(minor_breaks = seq(1, 20, 1))
+
+# plot r-sqared metric
+map2_dfr(hotels_aggr_all_ols, 1:17,
+         ~tibble(r.squared = summary(.x)$r.squared,
+                 adj.r.squared = summary(.x)$adj.r.squared,
+                 n = .y)) %>% 
+  gather(key = "metric", value = "value", -n) %>% 
+  ggplot() +
+    geom_line(aes(x = n, y = value, col = metric)) +
+    theme_minimal() +
+    scale_x_continuous(minor_breaks = seq(1, 20, 1))
 
 # test tmap
-tm_shape(hotels_aggr_all %>% left_join(yamanote_area_grid) %>% st_as_sf(crs=6677)) +
-  tm_fill(col=c("duration.top5.d", "duration.all", "review.average"), style="jenks", n=6, alpha=0.7) +
-  tm_shape(destinations_sf) +
-  tm_dots(col="red") +
-  tm_base
-
-# should I put both metrics in?
-# hotels_aggr_all_ols = lm(review.average ~ price.lead.average * star.average +
-#                            duration.all +
-#                            fare.all +
-#                            transfers.all,
-#                      data = hotels_aggr_all)
-
-hotels_aggr_all_ols = lm(review.average ~ price.lead.average * star.average +
-                           duration.top5.d +
-                           fare.top5.d +
-                           transfers.top5.d,
-                     data = hotels_aggr_all)
-
-summary(hotels_aggr_all_ols)
+# tm_shape(hotels_aggr_all %>% left_join(yamanote_area_grid) %>% st_as_sf(crs=6677)) +
+#   tm_fill(col=c("duration.top5.d", "duration.all", "review.average"), style="jenks", n=6, alpha=0.7) +
+#   tm_shape(destinations_sf) +
+#   tm_dots(col="red") +
+#   tm_base
 ```
+
+The accessibility of hotel-grids can be calculated by taking the average time of all trips from those grids to every destination (all 17) in Tokyo registered in Expedia. However, this may not provide the best metric, or indeed reflect the choices of the average tourist -- 17 is too many attractions to go to in one visit. What can be done, however, is to take only the first *n* trips (the shortest few) and then average their metrics (time taken, fare, transfers) to get the accessibility metric. The graph above shows the resultant significance for each factor, as well as r-squared values for all *n* between 1 and 17 attractions. We can see that both the factors duration and fare, and also the r-squared values, perform best when n=2. Hence from here on we will use n=2 for examining the residuals in the model.
 
 ```{r Residuals of regression with utility-based accessibility}
 hotels_aggr_all %>%
-  mutate(.resid = hotels_aggr_all_ols$residuals) %>% 
+  mutate(.resid = hotels_aggr_all_ols[[2]]$residuals) %>% 
   left_join(yamanote_area_grid) %>% 
   st_as_sf(crs = 6677) %>% 
   tm_shape() +
@@ -311,7 +326,7 @@ hotels_aggr_all %>%
     tm_dots(col="red") +
     tm_base
 ```
-
+As we see the residuals still hold a certain spatial relationship against each other.
 
 ```{r Regression with straight-line distance accessibility}
 hotels_aggr_all_ols_sld = lm(review.average ~ price.lead.average * star.average +
@@ -321,4 +336,107 @@ hotels_aggr_all_ols_sld = lm(review.average ~ price.lead.average * star.average 
 summary(hotels_aggr_all_ols_sld)
 ```
 
+```{r Regression with accessibility using point hotel data}
+# Instead of binning hotels, bin only accessibilities instead.
+# It is perhaps unreasonable to class wildly different hotels in the same area as one archetype,
+#   but more reasonable to class not dissimilar accessibilities in the same area.
+
+hotels_sf_access = grid_routes_all_vars %>% 
+  group_by(fromID) %>% 
+  summarise_at(c("duration", "fare", "transfers"),
+               list(avg = ~.x[order(duration)[1:2]] %>% mean())) %>% 
+  rename(grid.id = fromID) %>% 
+  left_join(yamanote_area_grid) %>%
+  st_as_sf(crs = 6677) %>% 
+  st_join(hotels_sf, .)
+
+hotels_ols_access = lm(reviews.localizedOverallRating ~ price.lead * comparisonModel.starRating +
+                         duration_avg + fare_avg + transfers_avg,
+                       data = hotels_sf_access)
+
+summary(hotels_ols_access)
+```
+
+```{r Regression with sld accessibility using point hotel data}
+
+distances = tibble(from = fromPlace$fromID,
+                   to = toPlace$toID,
+                   distance.sld = st_distance(fromPlace, toPlace, by_element = T) %>% as.vector())
+
+hotels_sf_access_sld = grid_routes_all_vars %>% 
+  left_join(distances, by = c("fromID" = "from", "toID" = "to")) %>%
+  mutate(speed = distance/(duration/60),
+         time.sld = distance.sld/speed) %>% 
+  group_by(fromID) %>% 
+  summarise_at(c("distance.sld", "time.sld"),
+               list(avg = ~.x[order(distance.sld)[1:2]] %>% mean())) %>% 
+  rename_at(vars(contains("_")), ~str_replace(.x, "_", ".")) %>% 
+  rename(grid.id = fromID) %>% 
+  left_join(yamanote_area_grid) %>% 
+  st_as_sf(crs = 6677) %>% 
+  st_join(hotels_sf, .)
+
+hotels_ols_access_sld = lm(reviews.localizedOverallRating ~ price.lead * comparisonModel.starRating +
+                             distance.sld.avg + time.sld.avg,
+                           data = hotels_sf_access_sld)
+summary(hotels_ols_access_sld)
+```
+The same kind of model, using straight-line distance instead, shows a much more marginal improvement to the r-squared statistic, and also doesn't show any significance in the factor. Time actually has a bit of significance -- and it's perhaps because it was calculated by dividing the distance by the speed, which is gotten from duration using the network-based accessibility.
+
+```{r Residuals of utility-based accessibility model against price}
+hotels_sf_access %>% 
+  st_set_geometry(NULL) %>% 
+  mutate(.resid = hotels_ols_access$residuals) %>% 
+  select(reviews.localizedOverallRating, 
+         price.lead, comparisonModel.starRating, 
+         duration_avg, 
+         fare_avg, 
+         transfers_avg,
+         .resid) %>% 
+  gather("key", "value", -.resid) %>% 
+  ggplot() +
+    geom_jitter(aes(x = value, y = .resid)) +
+    facet_wrap(~key, scales = "free_x") +
+    theme_minimal()
+
+```
+
+```{r GWR}
+hotels_aggr_all_sp = grid_routes_all_vars %>% 
+  group_by(fromID) %>% 
+  summarise_at(c("duration", "fare", "transfers"),
+               list(avg = ~.x[order(duration)[1:2]] %>% mean())) %>% 
+  rename_at(vars(contains("_")), ~str_replace_all(.x, "_", ".")) %>% 
+  rename(grid.id = fromID) %>%  
+  inner_join(hotels_aggr) %>% 
+  left_join(yamanote_area_grid) %>% 
+  st_as_sf(crs = 6677) %>% 
+  select(grid.id, 
+         review.average, 
+         price.lead.average,
+         star.average,
+         duration.avg,
+         fare.avg,
+         transfers.avg) %>% 
+  as_Spatial()
+
+bandwidth = gwr.sel(review.average ~ 
+                      price.lead.average * star.average +
+                      duration.avg +
+                      fare.avg +
+                      transfers.avg,
+                    data=hotels_aggr_all_sp,
+                    adapt=F)
+
+gwr.model = gwr(review.average ~ 
+                      price.lead.average * star.average +
+                      duration.avg +
+                      fare.avg +
+                      transfers.avg,
+                data=hotels_aggr_all_sp,
+                adapt=bandwidth,
+                hatmatrix=T,
+                se.fit=T)
+gwr.model
+```
 
