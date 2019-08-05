@@ -264,8 +264,8 @@ get_topn_avg_ols = function(gr, n) {
   
   gr_ = gr %>% 
     group_by(fromID) %>% 
-    summarise_at(c("duration", "fare", "transfers"),
-                 list(avg = ~.x[order(duration)[1:n]] %>% mean())) %>% 
+    summarise_at(.vars = vars(duration, fare, transfers),
+                 .funs = list(avg = ~ mean(.[order(duration)[1:n]]))) %>% 
     rename_at(vars(contains("_")), ~str_replace_all(.x, "_", ".")) %>% 
     rename(grid.id = fromID)
   
@@ -329,11 +329,11 @@ hotels_aggr_all %>%
 As we see the residuals still hold a certain spatial relationship against each other.
 
 ```{r Regression with straight-line distance accessibility}
-hotels_aggr_all_ols_sld = lm(review.average ~ price.lead.average * star.average +
-                               distance +
-                               time.sld,
-                             data = hotels_aggr_all)
-summary(hotels_aggr_all_ols_sld)
+# hotels_aggr_all_ols_sld = lm(review.average ~ price.lead.average * star.average +
+#                                distance +
+#                                time.sld,
+#                              data = hotels_aggr_all)
+# summary(hotels_aggr_all_ols_sld)
 ```
 
 ```{r Regression with accessibility using point hotel data}
@@ -344,7 +344,7 @@ summary(hotels_aggr_all_ols_sld)
 hotels_sf_access = grid_routes_all_vars %>% 
   group_by(fromID) %>% 
   summarise_at(c("duration", "fare", "transfers"),
-               list(avg = ~.x[order(duration)[1:2]] %>% mean())) %>% 
+               list(avg = ~.[order(duration)[1:2]] %>% mean())) %>% 
   rename(grid.id = fromID) %>% 
   left_join(yamanote_area_grid) %>%
   st_as_sf(crs = 6677) %>% 
@@ -405,7 +405,7 @@ hotels_sf_access %>%
 hotels_aggr_all_sp = grid_routes_all_vars %>% 
   group_by(fromID) %>% 
   summarise_at(c("duration", "fare", "transfers"),
-               list(avg = ~.x[order(duration)[1:2]] %>% mean())) %>% 
+               list(avg = ~.[order(duration)[1:2]] %>% mean())) %>% 
   rename_at(vars(contains("_")), ~str_replace_all(.x, "_", ".")) %>% 
   rename(grid.id = fromID) %>%  
   inner_join(hotels_aggr) %>% 
@@ -434,7 +434,7 @@ gwr.model = gwr(review.average ~
                       fare.avg +
                       transfers.avg,
                 data=hotels_aggr_all_sp,
-                adapt=bandwidth,
+                bandwidth=1500,
                 hatmatrix=T,
                 se.fit=T)
 gwr.model
