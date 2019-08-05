@@ -254,7 +254,7 @@ hotels_aggr_sp %>%
 ```
 
 ```{r Regression with utility-based accessibility}
-get_topn_avg_ols = function(gr, n) {
+get_topn_avg = function(gr, n) {
   # gr_ = gr %>%
   #   group_by(fromID) %>%
   #   summarise(duration.avg = sort(duration)[1:n] %>% mean(),
@@ -274,14 +274,13 @@ get_topn_avg_ols = function(gr, n) {
     inner_join(gr_)
   
   if(nrow(h_aggr %>% na.omit()) == 0) warning(str_glue("for n={n} no cases left"))
-  
-  ols = lm(review.average ~ price.lead.average * star.average +
-             duration.avg + fare.avg + transfers.avg,
-           data = h_aggr)
-  return(ols)
+
+  return(h_aggr)
 }
 
-hotels_aggr_all_ols = map(1:17, ~get_topn_avg_ols(grid_routes_all_vars, .x))
+hotels_aggr_all = map(1:17, ~get_topn_avg(grid_routes_all_vars, .))
+hotels_aggr_all_ols = map(1:17, ~lm(data=., formula=review.average ~ price.lead.average * star.average +
+                                      duration.avg + fare.avg + transfers.avg))
 
 # plot significance by average top n model
 map2_dfr(hotels_aggr_all_ols, 1:17, 
