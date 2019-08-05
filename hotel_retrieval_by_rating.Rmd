@@ -401,6 +401,11 @@ hotels_sf_access %>%
 
 ```
 
+```{r Residuals of utility-based accessibility model with only duration}
+hotels_sf_access %>% 
+```
+
+
 ```{r GWR}
 hotels_aggr_all_sp = grid_routes_all_vars %>% 
   group_by(fromID) %>% 
@@ -437,6 +442,10 @@ gwr.model = gwr(review.average ~
                 bandwidth=1500,
                 hatmatrix=T,
                 se.fit=T)
-gwr.model
+
+gwr.model$SDF %>% 
+  st_as_sf(crs = 6677) %>% 
+  
+
 ```
 
