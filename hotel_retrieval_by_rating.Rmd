@@ -150,16 +150,18 @@ hotels_aggr = st_join(hotels_sf, yamanote_area_grid) %>%
   replace_na(list(grid.id = -1)) %>% 
   st_set_geometry(NULL) %>% 
   group_by(grid.id) %>% 
-  summarise(review.average = mean(reviews.localizedOverallRating),
-            review.median = median(reviews.localizedOverallRating),
-            review.sd = sd(reviews.localizedOverallRating),
-            price.lead.average = mean(price.lead),
-            price.lead.median = median(price.lead),
-            price.lead.sd = sd(price.lead),
-            star.average = mean(comparisonModel.starRating),
-            star.median = median(comparisonModel.starRating),
-            star.sd = sd(comparisonModel.starRating),
-            no.hotels = n())
+  summarise_at(c("reviews.localizedOverallRating", "price.lead", "comparisonModel.starRating"),
+               list(average = mean,
+                    median = median,
+                    sd = sd,
+                    n = ~n())) %>% 
+  rename_at(vars(contains("_")), ~str_replace_all(., "_", ".")) %>% 
+  rename_at(vars(contains("reviews.localizedOverallRating.")),
+            ~str_replace_all(., "reviews.localizedOverallRating.", "reviews.")) %>% 
+  rename_at(vars(contains("comparisonModel.starRating.")),
+            ~str_replace_all(., "comparisonModel.starRating.", "star.")) %>%
+  rename(no.hotels = price.lead.n) %>% 
+  select_at(vars(-contains(".n")))
 
 hotels_aggr_sf = yamanote_area_grid %>% 
   left_join(hotels_aggr)
@@ -279,8 +281,10 @@ get_topn_avg = function(gr, n) {
 }
 
 hotels_aggr_all = map(1:17, ~get_topn_avg(grid_routes_all_vars, .))
-hotels_aggr_all_ols = map(1:17, ~lm(data=., formula=review.average ~ price.lead.average * star.average +
+hotels_aggr_all_ols = map(hotels_aggr_all, ~lm(data=., formula=review.average ~ price.lead.average * star.average +
                                       duration.avg + fare.avg + transfers.avg))
+hotels_aggr_all_ols_d = map(hotels_aggr_all, ~lm(data=., formula=review.average ~ price.lead.average * star.average +
+                                        duration.avg))
 
 # plot significance by average top n model
 map2_dfr(hotels_aggr_all_ols, 1:17, 
@@ -304,12 +308,27 @@ map2_dfr(hotels_aggr_all_ols, 1:17,
     theme_minimal() +
     scale_x_continuous(minor_breaks = seq(1, 20, 1))
 
-# test tmap
-# tm_shape(hotels_aggr_all %>% left_join(yamanote_area_grid) %>% st_as_sf(crs=6677)) +
-#   tm_fill(col=c("duration.top5.d", "duration.all", "review.average"), style="jenks", n=6, alpha=0.7) +
-#   tm_shape(destinations_sf) +
-#   tm_dots(col="red") +
-#   tm_base
+# plot significance by average top n model (duration-only model)
+map2_dfr(hotels_aggr_all_ols_d, 1:17, 
+         ~summary(.x)$coefficients %>% 
+           as_tibble(rownames = "Coefficient") %>% 
+           mutate(top = .y)) %>% 
+  filter(Coefficient != "(Intercept)") %>% 
+  ggplot() +
+    geom_line(aes(x = top, y = `Pr(>|t|)`, col = Coefficient)) +
+    theme_minimal() +
+    scale_x_continuous(minor_breaks = seq(1, 20, 1))
+
+# plot r-sqared metric (duration-only model)
+map2_dfr(hotels_aggr_all_ols_d, 1:17,
+         ~tibble(r.squared = summary(.x)$r.squared,
+                 adj.r.squared = summary(.x)$adj.r.squared,
+                 n = .y)) %>% 
+  gather(key = "metric", value = "value", -n) %>% 
+  ggplot() +
+    geom_line(aes(x = n, y = value, col = metric)) +
+    theme_minimal() +
+    scale_x_continuous(minor_breaks = seq(1, 20, 1))
 ```
 
 The accessibility of hotel-grids can be calculated by taking the average time of all trips from those grids to every destination (all 17) in Tokyo registered in Expedia. However, this may not provide the best metric, or indeed reflect the choices of the average tourist -- 17 is too many attractions to go to in one visit. What can be done, however, is to take only the first *n* trips (the shortest few) and then average their metrics (time taken, fare, transfers) to get the accessibility metric. The graph above shows the resultant significance for each factor, as well as r-squared values for all *n* between 1 and 17 attractions. We can see that both the factors duration and fare, and also the r-squared values, perform best when n=2. Hence from here on we will use n=2 for examining the residuals in the model.
@@ -400,8 +419,38 @@ hotels_sf_access %>%
 
 ```
 
-```{r Residuals of utility-based accessibility model with only duration}
-hotels_sf_access %>% 
+```{r Square duration}
+hotels_aggr_all_ols_sq = map(hotels_aggr_all, ~lm(data=., formula=review.average ~ price.lead.average * star.average +
+                                      poly(duration.avg, 2) + fare.avg + transfers.avg))
+
+# plot significance by average top n model (duration-only model)
+map2_dfr(hotels_aggr_all_ols_sq, 1:17, 
+         ~summary(.x)$coefficients %>% 
+           as_tibble(rownames = "Coefficient") %>% 
+           mutate(top = .y)) %>% 
+  filter(Coefficient != "(Intercept)") %>% 
+  ggplot() +
+    geom_line(aes(x = top, y = `Pr(>|t|)`, col = Coefficient), lwd=1) +
+    theme_minimal() +
+    scale_x_continuous(minor_breaks = seq(1, 20, 1))
+
+# plot r-sqared metric (duration-only model)
+map2_dfr(hotels_aggr_all_ols_sq, 1:17,
+         ~tibble(r.squared = summary(.x)$r.squared,
+                 adj.r.squared = summary(.x)$adj.r.squared,
+                 n = .y)) %>% 
+  gather(key = "metric", value = "value", -n) %>% 
+  ggplot() +
+    geom_line(aes(x = n, y = value, col = metric)) +
+    theme_minimal() +
+    scale_x_continuous(minor_breaks = seq(1, 20, 1))
+```
+
+```{r Plot ggpairs with duration}
+ggpairs(data = hotels_aggr_all[[2]] %>% select(-grid.id),
+        upper = list(continuous = "density"),
+        lower = list(continuous = "smooth",
+                     combo = "dot_no_facet"))
 ```
 
 
@@ -442,8 +491,24 @@ gwr.model = gwr(review.average ~
                 hatmatrix=T,
                 se.fit=T)
 
+edf = gwr.model$results$edf
+get_pval = function(coef, se, edf) {
+  # 2-tailed Student t-test
+  t = coef/se
+  p = 2*pt(-abs(t), edf)
+  return(p)
+}
+
+gwr.pvals_sf
 gwr.model$SDF %>% 
   st_as_sf(crs = 6677) %>% 
+  mutate(price.lead.pval = get_pval(price.lead.average, price.lead.average_se, edf),
+         star.pval = get_pval(star.average, star.average_se, edf),
+         price.lead.average.star.pval = get_pval(price.lead.average.star.average, price.lead.average.star.average_se, edf),
+         duration.pval = get_pval(duration.avg, duration.avg_se, edf),
+         fare.pval = get_pval(fare.avg, fare.avg_se, edf),
+         transfers.pval = get_pval(transfers.avg, transfers.avg_se, edf)) %>% 
+  select_at(vars(contains("pval")))
   
 
 ```
