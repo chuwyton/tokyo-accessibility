@@ -499,8 +499,7 @@ get_pval = function(coef, se, edf) {
   return(p)
 }
 
-gwr.pvals_sf
-gwr.model$SDF %>% 
+gwr.pvals_sf = gwr.model$SDF %>% 
   st_as_sf(crs = 6677) %>% 
   mutate(price.lead.pval = get_pval(price.lead.average, price.lead.average_se, edf),
          star.pval = get_pval(star.average, star.average_se, edf),
@@ -510,6 +509,39 @@ gwr.model$SDF %>%
          transfers.pval = get_pval(transfers.avg, transfers.avg_se, edf)) %>% 
   select_at(vars(contains("pval")))
   
+tm_shape(gwr.pvals_sf) +
+  tm_fill(col=c("price.lead.pval", "star.pval", "price.lead.average.star.pval", "duration.pval", "fare.pval", "transfers.pval"),
+          breaks=c(0,0.001,0.01,0.05,0.1,1),
+          alpha=0.7,
+          palette="inferno") +
+  tm_facets(as.layers = T) +
+  tm_base
 
+gwr.estimates_sf = gwr.model$SDF %>% 
+  as_tibble() %>% 
+  bind_cols(gwr.pvals_sf) %>% 
+  st_as_sf(crs = 6677) %>% 
+  mutate_at(vars(contains("pval")),
+            list(a = ~case_when(.<0.001 ~ 0,
+                                .<0.01  ~ 0.2,
+                                .<0.05  ~ 0.4,
+                                .<0.1   ~ 0.6,
+                                TRUE    ~ 0.8))) %>% 
+  rename_at(vars(contains("_a")), ~str_replace_all(., "_a", ".a"))
+
+tmap.gwr.estimates = function(colname, sf=gwr.estimates_sf) {
+  tm_shape(sf) +
+    tm_fill(col=colname, alpha=0.8, palette="PiYG", n=4) +
+  tm_shape(sf[rep(1:nrow(sf), times = sf[[str_replace(colname, "\\.\\w*$", ".pval.a")]]*5), ]) +
+    tm_fill(col="dimgray", alpha=0.15) +
+  tm_base
+}
+
+tmap.gwr.estimates("price.lead.average")
+tmap.gwr.estimates("star.average")
+tmap.gwr.estimates("price.lead.average.star.average")
+tmap.gwr.estimates("duration.avg")
+tmap.gwr.estimates("fare.avg")
+tmap.gwr.estimates("transfers.avg")
 ```
 
