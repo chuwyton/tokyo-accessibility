@@ -253,6 +253,19 @@ hotels_aggr_sp %>%
     tm_fill(col = "moran.local", style = "jenks", palette = "-RdBu", colorNA = "#CCCCCC", alpha = 0.8) +
     tm_layout(title = "LISA (local clustering)") +
   tm_base
+
+# Of residuals
+moran_local_resid = localmoran(hotels_aggr_ols$residuals, hotels_wt, zero.policy = T)
+hotels_aggr_sp %>% 
+  st_as_sf() %>% 
+  mutate("moran.local" = moran_local_resid[,1]) %>% 
+  st_set_geometry(NULL) %>% 
+  select(moran.local, grid.id) %>% 
+  left_join(hotels_aggr_sf, .) %>% 
+  tm_shape() +
+    tm_fill(col = "moran.local", style = "jenks", palette="PiYG", colorNA="#CCCCCC", alpha=0.8) +
+    tm_layout(title = "LISA (local clustering)") +
+    tm_base
 ```
 
 ```{r Regression with utility-based accessibility}
@@ -272,8 +285,8 @@ get_topn_avg = function(gr, n) {
     rename(grid.id = fromID)
   
   h_aggr = hotels_aggr %>%
-    select(grid.id, review.average, price.lead.average, star.average) %>% 
-    inner_join(gr_)
+    select(grid.id, reviews.average, price.lead.average, star.average) %>% 
+    right_join(gr_)
   
   if(nrow(h_aggr %>% na.omit()) == 0) warning(str_glue("for n={n} no cases left"))
 
@@ -346,12 +359,39 @@ hotels_aggr_all %>%
 ```
 As we see the residuals still hold a certain spatial relationship against each other.
 
-```{r Regression with straight-line distance accessibility}
-# hotels_aggr_all_ols_sld = lm(review.average ~ price.lead.average * star.average +
-#                                distance +
-#                                time.sld,
-#                              data = hotels_aggr_all)
-# summary(hotels_aggr_all_ols_sld)
+```{r Comparison between UBA and SLDA metrics}
+grid_sld = fromPlace %>% 
+  bind_cols(toPlace) %>% 
+  mutate(distance = st_distance(fromPlace, toPlace, by_element = T)) %>% 
+  st_set_geometry(NULL)
+
+hotels_aggr_sld = map(1:17, ~grid_routes_all_vars %>%
+                        ungroup() %>% 
+                        left_join(grid_sld, by = c("fromID", "toID")) %>% 
+                        mutate(speed = distance.x/duration,
+                               time = as.numeric(distance.y)/speed) %>%  
+                        group_by(fromID) %>% 
+                        top_n(-.x, time) %>% 
+                        summarise(time.avg = mean(time)))
+
+hotels_aggr_all = map2(hotels_aggr_all, hotels_aggr_sld, 
+                       ~.x %>% 
+                         left_join(.y, by = c("grid.id" = "fromID")) %>% 
+                         mutate(diff.mins = (time.avg - duration.avg)/60) %>% 
+                         left_join(yamanote_area_grid) %>% 
+                         st_as_sf(crs = 6677)) 
+tm_shape(hotels_aggr_all[[2]]) +
+  tm_fill(col="diff.mins", breaks = c(-30, -15, -10, -5, -1, 0), palette="-inferno", alpha=0.8) +
+  tm_layout(title="Difference between SLD time and UBA time estimates") +
+  tm_base_mono
+
+hotels_aggr_all[[2]] %>% 
+  left_join(yamanote_area_grid, .) %>% 
+  mutate(duration.avg.min = duration.avg/60) %>% 
+  tm_shape() +
+  tm_fill(col="duration.avg.min", breaks = c(0, 5, 10, 15, 20, 30, 60), palette="Reds", alpha=0.8) +
+    tm_layout(title="Average duration") +
+    tm_base
 ```
 
 ```{r Regression with accessibility using point hotel data}
@@ -531,7 +571,7 @@ gwr.estimates_sf = gwr.model$SDF %>%
 
 tmap.gwr.estimates = function(colname, sf=gwr.estimates_sf) {
   tm_shape(sf) +
-    tm_fill(col=colname, alpha=0.8, palette="PiYG", n=4) +
+    tm_fill(col=colname, alpha=0.8, palette="PiYG", n=4, style="jenks") +
   tm_shape(sf[rep(1:nrow(sf), times = sf[[str_replace(colname, "\\.\\w*$", ".pval.a")]]*5), ]) +
     tm_fill(col="dimgray", alpha=0.15) +
   tm_base
@@ -543,5 +583,99 @@ tmap.gwr.estimates("price.lead.average.star.average")
 tmap.gwr.estimates("duration.avg")
 tmap.gwr.estimates("fare.avg")
 tmap.gwr.estimates("transfers.avg")
+```
+
+```{r Leaflets}
+library(leaflet)
+
+# Point hotel review
+pal_review = colorBin(palette = "Blues", domain = hotels_sf$reviews.localizedOverallRating, bins = seq(3, 5, 0.5))
+# pal_hotel_review = colorNumeric(palette = "Blues", domain = hotels_sf$reviews.localizedOverallRating)
+hotels_sf %>% 
+  st_transform(4326) %>% 
+  leaflet() %>% 
+  addTiles(options = tileOptions(opacity = 0.5)) %>% 
+  addCircleMarkers(stroke = F, radius = 5,
+             fillColor = ~pal_review(reviews.localizedOverallRating),
+             fillOpacity = 1) %>% 
+  addLegend(position = "topright",
+            pal = pal_review,
+            values = ~reviews.localizedOverallRating,
+            title = "Hotel Review Ratings",
+            opacity = 1)
+
+# Grid hotel review
+pal_review_grid = colorBin(palette = "Blues", bins = seq(3, 5, 0.5))
+hotels_aggr_sf %>% 
+  st_transform(4326) %>% 
+  leaflet() %>% 
+  addTiles(options = tileOptions(opacity = 0.5)) %>%
+  addPolygons(weight = 1, color = "gray",
+              fillColor = ~pal_review_grid(reviews.average),
+              fillOpacity = 0.8) %>% 
+  addLegend(position = "topright",
+            pal = pal_review_grid,
+            values = ~reviews.average,
+            title = "Hotel Review Ratings",
+            opacity = 1)
+
+# Spatial autocorrelation of residuals
+hotels_aggr_resid_sf = hotels_aggr_sp %>% 
+  st_as_sf() %>%
+  mutate("moran.local" = moran_local_resid[,1]) %>%
+  st_set_geometry(NULL) %>% 
+  select(grid.id, moran.local) %>% 
+  left_join(hotels_aggr_sf, .) %>% 
+  st_transform(4326)
+
+pal_review_resid = colorBin(palette = "RdBu", domain = hotels_aggr_resid_sf$moran.local, bins = 5)
+
+leaflet(hotels_aggr_resid_sf) %>% 
+  addTiles(options = tileOptions(opacity = 0.5)) %>% 
+  addPolygons(stroke = F, weight = 1, color = "gray",
+              fillColor = ~pal_review_resid(moran.local),
+              fillOpacity = 0.8) %>% 
+  addLegend(position = "topright",
+            pal = pal_review_resid,
+            values = ~moran.local,
+            title = "Local Moran's I",
+            opacity = 1)
+
+# Average duration (UBA)
+pal_duration = colorBin(palette = "Reds", bins = c(0, 5, 10, 15, 20, 30, Inf))
+
+hotels_aggr_all[[2]] %>% 
+  left_join(yamanote_area_grid, .) %>% 
+  mutate(duration.avg.min = duration.avg/60) %>% 
+  st_transform(4326) %>% 
+  leaflet() %>% 
+  addTiles(options = tileOptions(opacity = 0.5)) %>% 
+  addPolygons(stroke = F,
+              fillColor = ~pal_duration(duration.avg.min),
+              fillOpacity = 0.8) %>% 
+  addLegend(position = "topright",
+            pal = pal_duration,
+            values = ~duration.avg.min,
+            title = "Average duration of trips (to nearest 2 destinations)",
+            opacity = 1)
+
+# Difference between UBA and SLDA
+bin_duration_diff = c(-Inf,    -30,    -15,    -10,   -5,   -1,     0, Inf)
+cvl_duration_diff = c(     -45,    -20,    -12,    -7,   -3,   -0.5,  1)
+pal_duration_diff = colorBin(palette = "inferno", bins = bin_duration_diff)
+lab_duration_diff = c(">30 minutes", ">15", ">10", ">5", ">1 minute", "<1 minute", "Overestimation")
+
+hotels_aggr_all[[2]] %>%  
+  st_transform(4326) %>% 
+  leaflet() %>% 
+  addTiles(options = tileOptions(opacity = 0.5)) %>% 
+  addPolygons(stroke = F,
+              fillColor = ~pal_duration_diff(diff.mins),
+              fillOpacity = 0.8) %>% 
+  addLegend(position = "topright",
+            colors = pal_duration_diff(cvl_duration_diff),
+            labels = lab_duration_diff,
+            title = "Underestimation<br> in timings for SLDA",
+            opacity = 1)
 ```
 
