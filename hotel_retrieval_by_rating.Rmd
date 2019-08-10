@@ -615,8 +615,8 @@ hotels_aggr_sf %>%
               fillOpacity = 0.8) %>% 
   addLegend(position = "topright",
             pal = pal_review_grid,
-            values = ~reviews.average,
             title = "Hotel Review Ratings",
+            values = ~reviews.average,
             opacity = 1)
 
 # Spatial autocorrelation of residuals
