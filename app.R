@@ -10,7 +10,7 @@ library(leaflet)
 
 # Data
 hotels_aggr_all = readRDS("data/hotels_aggr_all.rds") %>% 
-  map(~.x %>% st_transform(4326))
+  map(~.x %>% na.omit() %>% st_transform(4326))
 hotels_aggr_all_sp = map(hotels_aggr_all, as_Spatial)
 hotels_aggr_gwr = hotels_aggr_all_sp %>% 
   map(~gwr(reviews.average ~
@@ -31,7 +31,7 @@ get_pval = function(coef, se, edf) {
   return(p)
 }
 
-hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, .x$SDF %>% 
+hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>% 
   st_as_sf(crs = 6677) %>% 
   mutate(price.lead.pval = get_pval(price.lead.average, price.lead.average_se, .y),
          star.pval = get_pval(star.average, star.average_se, .y),
@@ -57,6 +57,7 @@ bin_reviews = seq(3, 5, 0.5)
 cvl_reviews = seq(3.25, 4.75, 0.5)
 pal_reviews = colorBin(palette = "Blues", bins = bin_reviews)
 lab_reviews = map2_chr(bin_reviews[1:4], bin_reviews[2:5], ~str_glue("{.x} \u2013 {.y}"))
+
 
 ####################
 # UI
@@ -95,7 +96,8 @@ ui = fluidPage(
         ),
         tabPanel(
           title = "Geographically Weighted Regression",
-          "To be implemented"
+          # GWR map
+          leafletOutput("mapGwr")
         )
       )
     )
@@ -132,6 +134,35 @@ server = function(input, output) {
                 colors = pal_reviews(cvl_reviews),
                 labels = lab_reviews,
                 opacity = 1)
+  })
+  
+  output$mapGwr = renderLeaflet({
+    # Data
+    data = hotels_aggr_gwr_est[[input$slider_shortDest]]
+    # Palette
+    rng = range(data$duration.avg)
+    if(rng[1] * rng[2] < 0) {
+      # Diverge around 0
+      m_rng = range(data$duration.avg) %>% max()
+      rng_gwr = c(-m_rng, m_rng)
+      pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
+    }
+    else {
+      # Sequential
+      pal_gwr = colorBin(palette = "YlGn", domain = data$duration.avg, bins = 4)
+    }
+    
+    leaflet() %>%
+      addProviderTiles(providers$Stamen.TonerLines) %>% 
+      addPolygons(data = data,
+                  stroke = F,
+                  fillColor = ~pal_gwr(duration.avg),
+                  fillOpacity = 0.8) %>% 
+      addLegend(position = "topright",
+                title = "Coefficient estimate: <br> trip duration",
+                data = data,
+                pal = pal_gwr,
+                values = ~duration.avg)
   })
 }
 
