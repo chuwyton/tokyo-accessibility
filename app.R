@@ -9,9 +9,10 @@ library(spgwr)
 library(leaflet)
 
 # Data
-hotels_aggr_all = readRDS("data/hotels_aggr_all.rds") %>% 
+print("Getting data")
+hotels_aggr_all = read_rds(here::here("data/hotels_aggr_all.rds")) %>% 
   map(~.x %>% na.omit() %>% st_transform(4326))
-hotels_aggr_all_sp = map(hotels_aggr_all, as_Spatial)
+hotels_aggr_all_sp = map(hotels_aggr_all, ~na.omit(.) %>% st_transform(6677) %>% as_Spatial())
 hotels_aggr_gwr = hotels_aggr_all_sp %>% 
   map(~gwr(reviews.average ~
              price.lead.average * star.average +
@@ -31,8 +32,9 @@ get_pval = function(coef, se, edf) {
   return(p)
 }
 
-hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>% 
-  st_as_sf(crs = 6677) %>% 
+hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>%
+                             st_as_sf(crs = 6677) %>% 
+                             st_transform(4326) %>% 
   mutate(price.lead.pval = get_pval(price.lead.average, price.lead.average_se, .y),
          star.pval = get_pval(star.average, star.average_se, .y),
          price.lead.average.star.pval = get_pval(price.lead.average.star.average, price.lead.average.star.average_se, .y),
@@ -141,13 +143,13 @@ server = function(input, output) {
     data = hotels_aggr_gwr_est[[input$slider_shortDest]]
     # Palette
     rng = range(data$duration.avg)
+    sig = (((rng[1] - rng[2]) %>% abs() %>% log(10)) * -1) %>% ceiling()
     if(rng[1] * rng[2] < 0) {
       # Diverge around 0
-      m_rng = range(data$duration.avg) %>% max()
+      m_rng = range(data$duration.avg) %>% abs() %>% max()
       rng_gwr = c(-m_rng, m_rng)
       pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
-    }
-    else {
+    } else {
       # Sequential
       pal_gwr = colorBin(palette = "YlGn", domain = data$duration.avg, bins = 4)
     }
@@ -162,7 +164,8 @@ server = function(input, output) {
                 title = "Coefficient estimate: <br> trip duration",
                 data = data,
                 pal = pal_gwr,
-                values = ~duration.avg)
+                values = ~duration.avg,
+                labFormat = labelFormat(digits = sig))
   })
 }
 
