@@ -60,12 +60,15 @@ cvl_reviews = seq(3.25, 4.75, 0.5)
 pal_reviews = colorBin(palette = "Blues", bins = bin_reviews)
 lab_reviews = map2_chr(bin_reviews[1:4], bin_reviews[2:5], ~str_glue("{.x} \u2013 {.y}"))
 
+# Bounding Box
+bbox = hotels_aggr_all[[1]] %>% st_bbox()
 
 ####################
 # UI
 ####################
 ui = fluidPage(
   # App title
+  # Tokyo HotelVis: Visualising Accessibilities of Hotels in Tokyo?
   titlePanel("Hotel Reviews and Accessibility"),
   
   # Sidebar Layout
@@ -83,24 +86,29 @@ ui = fluidPage(
   
     # Main Panel (Map)
     mainPanel(
-      # Navbar
-      navbarPage(
-        title = "Hotel Review and Accessibility Scores",
-        id = "selectedTab",
-        tabPanel(
-          title = "Review Scores", 
-          leafletOutput("mapReview")
+      verticalLayout(
+        # Navbar
+        # It's hacky but if it works, hey
+        navbarPage(
+          title = "Visualizations",
+          id = "selectedTab",
+          tabPanel(
+            title = "Review Scores",
+            value = "review",
+            div()
+          ),
+          tabPanel(
+            title = "Average trip times",
+            value = "duration",
+            div()
+          ),
+          tabPanel(
+            title = "Geographically Weighted Regression",
+            value = "gwr",
+            div()
+          )
         ),
-        tabPanel(
-          title = "Average trip times",
-          # Duration map
-          leafletOutput("mapDuration")
-        ),
-        tabPanel(
-          title = "Geographically Weighted Regression",
-          # GWR map
-          leafletOutput("mapGwr")
-        )
+        leafletOutput("map")
       )
     )
   )
@@ -166,6 +174,83 @@ server = function(input, output) {
                 pal = pal_gwr,
                 values = ~duration.avg,
                 labFormat = labelFormat(digits = sig))
+  })
+  
+  output$map = renderLeaflet({
+    # Default (init) is the review map
+    leaflet() %>% 
+      addProviderTiles(providers$Stamen.TonerLines) %>% 
+      fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]])
+  })
+  
+  # Reactors
+  
+  
+  # Observers
+  observe({
+    if(input$selectedTab == "review"){
+      leafletProxy("map", data = hotels_aggr_all[[1]]) %>% 
+        clearGroup("duration") %>% 
+        clearGroup("gwr") %>% 
+        clearControls() %>% 
+        addPolygons(group = "review",
+                    stroke = F,
+                    fillColor = ~pal_reviews(reviews.average),
+                    fillOpacity = 0.8) %>%
+        addLegend(group = "review",
+                  position = "topright", 
+                  title = "Average review scores",
+                  colors = pal_reviews(cvl_reviews),
+                  labels = lab_reviews,
+                  opacity = 1)
+    }
+    if(input$selectedTab == "duration"){
+      leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+        clearGroup("review") %>% 
+        clearGroup("gwr") %>% 
+        clearControls() %>% 
+        addPolygons(group = "duration",
+                    stroke = F,
+                    fillColor = ~pal_duration_diff(diff.mins),
+                    fillOpacity = 0.8) %>% 
+        addLegend(group = "duration",
+                  position = "topright",
+                  title = "Underestimation <br> in timings for SLDA",
+                  colors = pal_duration_diff(cvl_duration_diff),
+                  labels = lab_duration_diff,
+                  opacity = 1)
+    }
+    if(input$selectedTab == "gwr"){
+      # Data
+      data = hotels_aggr_gwr_est[[input$slider_shortDest]]
+      # Palette
+      rng = range(data$duration.avg)
+      sig = (((rng[1] - rng[2]) %>% abs() %>% log(10)) * -1) %>% ceiling()
+      if(rng[1] * rng[2] < 0) {
+        # Diverge around 0
+        m_rng = range(data$duration.avg) %>% abs() %>% max()
+        rng_gwr = c(-m_rng, m_rng)
+        pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
+      } else {
+        # Sequential
+        pal_gwr = colorBin(palette = "YlGn", domain = data$duration.avg, bins = 4)
+      }
+      
+      leafletProxy("map", data = data) %>% 
+        clearGroup("review") %>% 
+        clearGroup("duration") %>% 
+        clearControls() %>% 
+        addPolygons(group = "gwr",
+                    stroke = F,
+                    fillColor = ~pal_gwr(duration.avg),
+                    fillOpacity = 0.8) %>% 
+        addLegend(group = "gwr",
+                  position = "topright",
+                  title = "Coefficient estimate: <br> trip duration",
+                  pal = pal_gwr,
+                  values = ~duration.avg,
+                  labFormat = labelFormat(digits = sig))
+    }
   })
 }
 
