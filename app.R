@@ -66,52 +66,67 @@ bbox = hotels_aggr_all[[1]] %>% st_bbox()
 ####################
 # UI
 ####################
-ui = fluidPage(
-  # App title
-  # Tokyo HotelVis: Visualising Accessibilities of Hotels in Tokyo?
-  titlePanel("Hotel Reviews and Accessibility"),
+ui = fillPage(
+  title = "Tokyo HotelVis | Visualising Accessibilities of Hotels in Tokyo",
+  # Navbar
+  # It's hacky but if it works, hey
+  navbarPage(
+    fluid = F,
+    position = "fixed-top",
+    title = "Visualizations",
+    id = "selectedTab",
+    tabPanel(
+      title = "Review Scores",
+      value = "review",
+      div()
+    ),
+    tabPanel(
+      title = "Average trip times",
+      value = "duration",
+      div()
+    ),
+    tabPanel(
+      title = "Geographically Weighted Regression",
+      value = "gwr",
+      div()
+    )
+  ),
   
   # Sidebar Layout
-  sidebarLayout(
-    position = "right",
+  fillRow(
+    flex = c(1, NA),
+  
+    # Main Panel (Map)
+    fillCol(
+      leafletOutput(outputId = "map", height = "100%")
+    ),
     
     # Sidebar Panel (Filter)
-    sidebarPanel = sidebarPanel(
+    fillCol(
+      flex = NA,
+      width = "200px",
       # Filter items
       # Number of shortest destinations to take average from
       sliderInput("slider_shortDest",
-                  label = "Shortest destinations <br> to take average from",
-                  min = 1, max = 17, value = 2)
-    ),
-  
-    # Main Panel (Map)
-    mainPanel(
-      verticalLayout(
-        # Navbar
-        # It's hacky but if it works, hey
-        navbarPage(
-          title = "Visualizations",
-          id = "selectedTab",
-          tabPanel(
-            title = "Review Scores",
-            value = "review",
-            div()
-          ),
-          tabPanel(
-            title = "Average trip times",
-            value = "duration",
-            div()
-          ),
-          tabPanel(
-            title = "Geographically Weighted Regression",
-            value = "gwr",
-            div()
-          )
-        ),
-        leafletOutput("map")
+                  label = "Shortest destinations to take average from",
+                  min = 1, max = 17, value = 2),
+      hr(),
+      h4("Layers"),
+      fillRow(
+        height = "30px",
+        checkboxInput("lines", "Railway", value = T, width = "100%"),
+        checkboxInput("stations", "Stations", value = F, width = "100%")
+      ),
+      fillRow(
+        height = "30px",
+        checkboxInput("grid", "Grid", value = F, width = "100%"),
+        div()
       )
     )
-  )
+  ),
+  
+  # Styling
+  tags$style(type="text/css", "body {padding-top: 50px}")
 )
 
 ####################
