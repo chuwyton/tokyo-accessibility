@@ -51,6 +51,7 @@ hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>%
     rename_at(vars(contains("_a")), ~str_replace_all(., "_a", ".a")))
 
 lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
+destinations_sf = read_rds("data/destinations_sf.rds") %>% st_transform(4326)
 
 # Palettes, Legends and Colors
 bin_duration = c(0, 5, 10, 15, 20, 30, 45, 60, Inf)
@@ -137,7 +138,7 @@ ui = fillPage(
         fillRow(
           height = "30px",
           checkboxInput("grid", "Grid", value = F, width = "100%"),
-          div()
+          checkboxInput("destinations", "Destinations", value = T, width = "100%")
         )
       )
     )
@@ -154,7 +155,7 @@ server = function(input, output) {
   output$map = renderLeaflet({
     # Default (init) is the review map
     leaflet() %>% 
-      addProviderTiles(providers$Stamen.TonerBackground) %>% 
+      addProviderTiles(providers$Stamen.TonerLite, options = tileOptions(opacity = 0.5)) %>% 
       fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]]) %>% 
       addPolygons(group = "Reviews",
                   data = hotels_aggr_all[[1]],
@@ -164,7 +165,13 @@ server = function(input, output) {
       addPolylines(group = "lines",
                    data = lines_sf,
                    stroke = 2,
-                   color = ~col)
+                   color = ~col) %>% 
+      addCircleMarkers(group = "destinations",
+                       data = destinations_sf,
+                       stroke = F,
+                       fillColor = "Red",
+                       fillOpacity = 1,
+                       radius = 3)
   })
   
   ### Reactors
@@ -395,6 +402,17 @@ server = function(input, output) {
     } else {
       leafletProxy("map") %>% 
         hideGroup("lines")
+    }
+  })
+  
+  # Toggle Destinations
+  observe({
+    if(input$destinations){
+      leafletProxy("map") %>% 
+        showGroup("destinations")
+    }else{
+      leafletProxy("map") %>% 
+        hideGroup("destinations")
     }
   })
 }
