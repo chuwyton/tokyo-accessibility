@@ -169,40 +169,42 @@ bb_tokyo = getbb("Tokyo")
 # queries
 q_linebase = bb_tokyo %>% 
   opq(timeout = 60) %>% 
-  add_osm_feature("route", "train|subway")
-q_linebase_subway = bb_tokyo %>% 
-  opq(timeout = 60) %>% 
-  add_osm_feature("route", "subway")
+  add_osm_feature("route", c("train", "subway"))
+# q_linebase_subway = bb_tokyo %>% 
+#   opq(timeout = 60) %>% 
+#   add_osm_feature("route", "subway")
 
 # JR
 q_yamanote = q_linebase %>% add_osm_feature("name:en", "JR Yamanote Line (Outer)")
 q_chuo     = q_linebase %>% add_osm_feature("name:en", "JR Chuo Rapid Line")
-q_keihintohoku = q_linebase %>% add_osm_feature("ref", "JK") %>% add_osm_feature("from:en", "Omiya")
+q_keihintohoku = q_linebase %>% add_osm_feature("name:en", "JR Keihin-T\u014dhoku Line")
+q_keiyo    = q_linebase %>% add_osm_feature("name:en", "JR Keiyo Line (W->E)")
 
 # TokyoMetro
-q_ginza     = q_linebase_subway %>% add_osm_feature("name:en", "Tokyo Metro Ginza Line (Shibuya --> Asakusa)")
-q_marunouchi= q_linebase_subway %>% add_osm_feature("name:en", "Marunouchi Line (Ogikubo --> Ikebukuro)")
-q_hibiya    = q_linebase_subway %>% add_osm_feature("name:en", "Tokyo Metro Hibiya Line (Kita-Senju --> Naka-meguro)")
-q_tozai     = q_linebase_subway %>% add_osm_feature("ref", "T") %>% add_osm_feature("from", "中野")
-q_chiyoda   = q_linebase_subway %>% add_osm_feature("name:en", "Tokyo Metro Chiyoda Line (Ayase --> Yoyogi-Uehara)")
-q_yurakucho = q_linebase_subway %>% add_osm_feature("ref", "Y") %>% add_osm_feature("from", "新木場")
-q_hanzomon  = q_linebase_subway %>% add_osm_feature("ref", "Z") %>% add_osm_feature("to", "押上")
-q_namboku   = q_linebase_subway %>% add_osm_feature("name:en", "Tokyo Metro Namboku Line (Akabane-iwabuchi --> Meguro)")
-q_fukutoshin= q_linebase_subway %>% add_osm_feature("name:en", "Tokyo Metro Fukutoshin Line (Shibuya --> Wakoshi)")
+q_ginza     = q_linebase %>% add_osm_feature("name:en", "Tokyo Metro Ginza Line (Shibuya --> Asakusa)")
+q_marunouchi= q_linebase %>% add_osm_feature("name:en", "Marunouchi Line (Ogikubo --> Ikebukuro)")
+q_hibiya    = q_linebase %>% add_osm_feature("name:en", "Tokyo Metro Hibiya Line (Kita-Senju --> Naka-meguro)")
+q_tozai     = q_linebase %>% add_osm_feature("name:en", "Tokyo Metro T\u014dzai Line (Nakano --> Nishi-Funabashi)")
+q_chiyoda   = q_linebase %>% add_osm_feature("name:en", "Tokyo Metro Chiyoda Line (Ayase --> Yoyogi-Uehara)")
+q_yurakucho = q_linebase %>% add_osm_feature("name:en", "Tokyo Metro Y\u016brakuch\u014d Line (Wakoshi --> Shin-kiba)")
+q_hanzomon  = q_linebase %>% add_osm_feature("name:en", "Tokyo Metro Hanz\u014dmon Line (Shibuya --> Oshiage)")
+q_namboku   = q_linebase %>% add_osm_feature("name:en", "Tokyo Metro Namboku Line (Akabane-iwabuchi --> Meguro)")
+q_fukutoshin= q_linebase %>% add_osm_feature("name:en", "Tokyo Metro Fukutoshin Line (Shibuya --> Wakoshi)")
 
 # Toei
-q_asakusa   = q_linebase_subway %>% add_osm_feature("name:en", "Toei Asakusa Line (Oshiage --> Nishi-magome)")
-q_mita      = q_linebase_subway %>% add_osm_feature("name:en", "Toei Mita Line (Nishi-takashimadaira --> Meguro)")
-q_shinjuku  = q_linebase_subway %>% add_osm_feature("name:en", "Shinjuku Line (Shinjuku --> Motoyawata)")
-q_oedo      = q_linebase_subway %>% add_osm_feature("name:en", "Oedo Line (Hikarigaoka --> Tochomae)")
+q_asakusa   = q_linebase %>% add_osm_feature("name:en", "Toei Asakusa Line (Oshiage --> Nishi-magome)")
+q_mita      = q_linebase %>% add_osm_feature("name:en", "Toei Mita Line (Nishi-takashimadaira --> Meguro)")
+q_shinjuku  = q_linebase %>% add_osm_feature("name:en", "Shinjuku Line (Shinjuku --> Motoyawata)")
+q_oedo      = q_linebase %>% add_osm_feature("name:en", "Oedo Line (Hikarigaoka --> Tochomae)")
 
 # retrieval
 retrieve_line_sf = function(query) {
-  osmdata_sf(query)$osm_lines %>% st_transform(6677) %>% select(osm_id, name.en)
+  osmdata_sf(query)$osm_multilines %>% st_transform(6677)
 }
 yamanote_sf     = retrieve_line_sf(q_yamanote)
 chuo_sf         = retrieve_line_sf(q_chuo)
 keihintohoku_sf = retrieve_line_sf(q_keihintohoku)
+keiyo_sf        = retrieve_line_sf(q_keiyo)
 ginza_sf        = retrieve_line_sf(q_ginza)
 marunouchi_sf   = retrieve_line_sf(q_marunouchi)
 hibiya_sf       = retrieve_line_sf(q_hibiya)
@@ -239,29 +241,39 @@ yamanote_area_grid = yamanote_area %>%
 ```
 
 ```{r consolidate lines}
-lines_sf = rbind(yamanote_sf, chuo_sf, keihintohoku_sf,
-                 ginza_sf, marunouchi_sf, hibiya_sf, tozai_sf, 
-                 chiyoda_sf, yurakucho_sf, hanzomon_sf, namboku_sf, fukutoshin_sf,
-                 asakusa_sf, mita_sf, shinjuku_sf, oedo_sf) %>% 
-  st_join(yamanote_area_grid) %>% 
-  na.omit() %>% 
-  mutate(col = case_when(name.en == "Yamanote Line"               ~ "#80c241",
-                         name.en == "JR Chuo Line"                ~ "#f15a22",
-                         name.en == "Chuo Line"                   ~ "#f15a22",
-                         name.en == "Keihin-Tohoku Line"          ~ "#00b2e5",
-                         name.en == "Tokyo Metro Ginza Line"      ~ "#f7931d",
-                         name.en == "Tokyo Metro Marunouchi Line" ~ "#ed1c24",
-                         name.en == "Tokyo Metro Hibiya Line"     ~ "#8ba2ae",
-                         name.en == "Tokyo Metro Tōzai Line"      ~ "#00b2dd",
-                         name.en == "Tokyo Metro Chiyoda Line"    ~ "#00a650",
-                         name.en == "Tokyo Metro Yūrakuchō Line"  ~ "#bb8b38",
-                         name.en == "Tokyo Metro Hanzōmon Line"   ~ "#937cb9",
-                         name.en == "Tokyo Metro Namboku Line"    ~ "#00b5ad",
-                         name.en == "Tokyo Metro Fukutoshin Line" ~ "#ba6831",
-                         name.en == "Toei Asakusa Line"           ~ "#ef5ba1",
-                         name.en == "Toei Mita Line"              ~ "#0080c6",
-                         name.en == "Toei Shinjuku Line"          ~ "#6dc067",
-                         name.en == "Toei Oedo Line"              ~ "#b51e82"))
+lines = list(yamanote_sf, chuo_sf, keihintohoku_sf, keiyo_sf, 
+          ginza_sf, marunouchi_sf, hibiya_sf, tozai_sf,
+          chiyoda_sf, yurakucho_sf, hanzomon_sf, namboku_sf,
+          fukutoshin_sf,
+          asakusa_sf, mita_sf, shinjuku_sf, oedo_sf)
+
+linecols = c("#80c241", "#f15a22", "#00b2e5", "#dc143c",
+             "#f7931d", "#ed1c24", "#72858f", "#00b2dd",
+             "#00a650", "#bb8b38", "#937cb9", "#00b5ad",
+             "#ba6831", 
+             "#ef5ba1", "#0080c6", "#6dc067", "#b51e82")
+
+linenames = c("JR Yamanote Line", "JR Chuo Line", "JR Keihin-Tohoku Line", "JR Keiyo Line",
+              "Tokyo Metro Ginza Line", "Tokyo Metro Marunouchi Line", "Tokyo Metro Hibiya Line",
+              "Tokyo Metro Tozai Line", "Tokyo Metro Chiyoda Line", "Tokyo Metro Yurakucho Line",
+              "Tokyo Metro Hanzomon Line", "Tokyo Metro Namboku Line", "Tokyo Metro Fukutoshin Line",
+              "Toei Asakusa Line", "Toei Mita Line", "Toei Shinjuku Line",
+              "Toei Oedo Line")
+
+lines_sf = map2(lines, linenames, ~.x %>%
+                  mutate(name = .y) %>%
+                  mutate(len = st_length(.)) %>% 
+                  top_n(1, len) %>% 
+                  select(name)) %>% 
+  map2(linecols, ~mutate(.x, col = .y)) %>% 
+  cbind() %>% 
+  as_tibble() %>% 
+  unnest() %>% 
+  st_as_sf(crs = 6677) %>% 
+  st_crop(c("xmin" = -13878.701, 
+            "ymin" = -44294.410,
+            "xmax" =   4500,
+            "ymax" = -27128.602))
 
 tm_base = tm_shape(lines_sf) +
   tm_sf(col = "col", lwd = 2) +
