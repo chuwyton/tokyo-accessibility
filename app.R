@@ -167,16 +167,17 @@ server = function(input, output) {
                    color = ~col)
   })
   
-  # Reactors
+  ### Reactors
   
   
-  # Observers
+  ### Observers
+  # Change in selected tab
   observe({
     if(input$selectedTab == "review"){
       leafletProxy("map", data = hotels_aggr_all[[1]]) %>% 
-        hideGroup(c("SLDA", "Differences", "UBA", "GWR")) %>%  
+        hideGroup(c("SLDA", "Differences", "UBA", "GWR")) %>% 
+        showGroup("Reviews") %>% 
         clearControls() %>%
-        removeLayersControl() %>% 
         addLegend(position = "topright", 
                   title = "Average review scores",
                   colors = pal_reviews(cvl_reviews),
@@ -186,27 +187,38 @@ server = function(input, output) {
     if(input$selectedTab == "duration"){
       leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
         hideGroup(c("Reviews", "GWR")) %>% 
-        clearControls() %>% 
-        addLegend(group = "SLDA",
-                  position = "topright",
-                  title = "SLDA estimations",
-                  colors = pal_duration(cvl_duration),
-                  labels = lab_duration,
-                  opacity = 1) %>% 
-        addLegend(group = "Differences",
-                  position = "topright",
-                  title = "Underestimation <br> in timings for SLDA",
-                  colors = pal_duration_diff(cvl_duration_diff),
-                  labels = lab_duration_diff,
-                  opacity = 1) %>% 
-        addLegend(group = "UBA",
-                  position = "topright",
-                  title = "UBA estimations",
-                  colors = pal_duration(cvl_duration),
-                  labels = lab_duration,
-                  opacity = 1) %>%
-        addLayersControl(baseGroups = c("SLDA", "Differences", "UBA"),
-                         options = layersControlOptions(collapsed = F))
+        clearControls()
+      
+      if(isolate({input$duration_type}) == "SLDA"){
+        leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+          showGroup("SLDA") %>% 
+          addLegend(group = "SLDA",
+                    position = "topright",
+                    title = "SLDA estimations",
+                    colors = pal_duration(cvl_duration),
+                    labels = lab_duration,
+                    opacity = 1)
+      }
+      if(isolate({input$duration_type}) == "Compare"){
+        leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+          showGroup("Differences") %>% 
+          addLegend(group = "Differences",
+                    position = "topright",
+                    title = "Underestimation <br> in timings for SLDA",
+                    colors = pal_duration_diff(cvl_duration_diff),
+                    labels = lab_duration_diff,
+                    opacity = 1)
+      }
+      if(isolate({input$duration_type}) == "UBA"){
+        leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+          showGroup("UBA") %>% 
+          addLegend(group = "UBA",
+                    position = "topright",
+                    title = "UBA estimations",
+                    colors = pal_duration(cvl_duration),
+                    labels = lab_duration,
+                    opacity = 1)
+      }
     }
     if(input$selectedTab == "gwr"){
       # Data
@@ -228,7 +240,6 @@ server = function(input, output) {
         hideGroup(c("Reviews", "SLDA", "Differences", "UBA")) %>% 
         showGroup("GWR") %>% 
         clearControls() %>% 
-        removeLayersControl() %>% 
         addLegend(position = "topright",
                   title = "Coefficient estimate: <br> trip duration",
                   pal = pal_gwr,
@@ -237,16 +248,7 @@ server = function(input, output) {
     }
   })
   
-  observe({
-    if(input$lines){
-      leafletProxy("map") %>% 
-        showGroup("lines")
-    } else {
-      leafletProxy("map") %>% 
-        hideGroup("lines")
-    }
-  })
-  
+  # Change in shortest destinations slider value
   observe({
     if(input$slider_shortDest){
       ### Duration
@@ -266,15 +268,40 @@ server = function(input, output) {
                     fillOpacity = 0.8) %>% 
         hideGroup(c("SLDA", "Differences", "UBA"))
       
+      # If duration is the selected tab, show group and redraw legend
       if(isolate({input$selectedTab}) == "duration"){
         if(isolate({input$duration_type}) == "SLDA"){
-          leafletProxy("map") %>% showGroup("SLDA")
+          leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+            showGroup("SLDA") %>% 
+            clearControls() %>% 
+            addLegend(group = "SLDA",
+                      position = "topright",
+                      title = "SLDA estimations",
+                      colors = pal_duration(cvl_duration),
+                      labels = lab_duration,
+                      opacity = 1)
         }
         if(isolate({input$duration_type}) == "Compare"){
-          leafletProxy("map") %>% showGroup("Differences")
+          leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+            showGroup("Differences") %>% 
+            clearControls() %>% 
+            addLegend(group = "Differences",
+                      position = "topright",
+                      title = "Underestimation <br> in timings for SLDA",
+                      colors = pal_duration_diff(cvl_duration_diff),
+                      labels = lab_duration_diff,
+                      opacity = 1)
         }
         if(isolate({input$duration_type}) == "UBA"){
-          leafletProxy("map") %>% showGroup("UBA")
+          leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+            showGroup("UBA") %>% 
+            clearControls() %>% 
+            addLegend(group = "UBA",
+                      position = "topright",
+                      title = "UBA estimations",
+                      colors = pal_duration(cvl_duration),
+                      labels = lab_duration,
+                      opacity = 1)
         }
       }
       
@@ -301,6 +328,7 @@ server = function(input, output) {
                     fillColor = ~pal_gwr(duration.avg),
                     fillOpacity = 0.8)
       
+      # If gwr is the selected tab, draw legend
       if(isolate({input$selectedTab}) == "gwr"){
         leafletProxy("map", data = data) %>% 
           clearControls() %>% 
@@ -312,6 +340,61 @@ server = function(input, output) {
       }else{
         leafletProxy("map") %>% hideGroup("GWR")
       }
+    }
+  })
+  
+  # Change in accessibility metric
+  observe({
+    input$duration_type
+    if(isolate({input$selectedTab}) == "duration"){
+      data = hotels_aggr_all[[isolate({input$slider_shortDest})]]
+      if(input$duration_type == "SLDA"){
+        leafletProxy("map", data = data) %>%
+          hideGroup(c("Differences", "UBA")) %>% 
+          showGroup("SLDA") %>% 
+          clearControls() %>% 
+          addLegend(group = "SLDA",
+                    position = "topright",
+                    title = "SLDA estimations",
+                    colors = pal_duration(cvl_duration),
+                    labels = lab_duration,
+                    opacity = 1)
+      }
+      if(input$duration_type == "Compare"){
+        leafletProxy("map", data = data) %>% 
+          hideGroup(c("SLDA", "UBA")) %>% 
+          showGroup("Differences") %>% 
+          clearControls() %>% 
+          addLegend(group = "Differences",
+                    position = "topright",
+                    title = "Underestimation <br> in timings for SLDA",
+                    colors = pal_duration_diff(cvl_duration_diff),
+                    labels = lab_duration_diff,
+                    opacity = 1)
+      }
+      if(input$duration_type == "UBA"){
+        leafletProxy("map", data = data) %>% 
+          hideGroup(c("SLDA", "Differences")) %>% 
+          showGroup("UBA") %>% 
+          clearControls() %>% 
+          addLegend(group = "UBA",
+                    position = "topright",
+                    title = "UBA estimations",
+                    colors = pal_duration(cvl_duration),
+                    labels = lab_duration,
+                    opacity = 1)
+      }
+    }
+  })
+  
+  # Toggle lines
+  observe({
+    if(input$lines){
+      leafletProxy("map") %>% 
+        showGroup("lines")
+    } else {
+      leafletProxy("map") %>% 
+        hideGroup("lines")
     }
   })
 }
