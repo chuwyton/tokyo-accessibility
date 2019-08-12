@@ -239,10 +239,8 @@ server = function(input, output) {
   
   observe({
     if(input$lines){
-      leafletProxy("map", data = lines_sf) %>% 
-        addPolylines(group = "lines",
-                     stroke = 2,
-                     color = ~col)
+      leafletProxy("map") %>% 
+        hideGroup("lines")
     } else {
       leafletProxy("map") %>% 
         clearGroup("lines")
