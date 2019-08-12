@@ -3,6 +3,7 @@
 ####################
 # Libraries
 library(shiny)
+library(shinyjs)
 library(tidyverse)
 library(sf)
 library(spgwr)
@@ -49,7 +50,14 @@ hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>%
                                 TRUE    ~ 0.8))) %>% 
     rename_at(vars(contains("_a")), ~str_replace_all(., "_a", ".a")))
 
+lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
+
 # Palettes, Legends and Colors
+bin_duration = c(0, 5, 10, 15, 20, 30, 45, 60, Inf)
+cvl_duration = c(2.5, 7.5, 12.5, 17.5, 25, 37.5, 52.5, 70)
+pal_duration = colorBin(palett = "YlOrRd", bins = bin_duration)
+lab_duration = c("<5 minutes", "<10", "<15", "<20", "<30", "<45", "<60", ">60 minutes")
+
 bin_duration_diff = c(-Inf,    -30,    -15,    -10,   -5,   -1,     0, Inf)
 cvl_duration_diff = c(     -45,    -20,    -12,    -7,   -3,   -0.5,  1)
 pal_duration_diff = colorBin(palette = "inferno", bins = bin_duration_diff)
@@ -67,6 +75,7 @@ bbox = hotels_aggr_all[[1]] %>% st_bbox()
 # UI
 ####################
 ui = fillPage(
+  useShinyjs(),
   title = "Tokyo HotelVis | Visualising Accessibilities of Hotels in Tokyo",
   # Navbar
   # It's hacky but if it works, hey
@@ -103,24 +112,33 @@ ui = fillPage(
     
     # Sidebar Panel (Filter)
     fillCol(
-      flex = NA,
+      flex = 1,
       width = "200px",
-      # Filter items
-      # Number of shortest destinations to take average from
-      sliderInput("slider_shortDest",
-                  label = "Shortest destinations to take average from",
-                  min = 1, max = 17, value = 2),
-      hr(),
-      h4("Layers"),
-      fillRow(
-        height = "30px",
-        checkboxInput("lines", "Railway", value = T, width = "100%"),
-        checkboxInput("stations", "Stations", value = F, width = "100%")
+      div(
+        h4("Map-specific Options"),
+        # Filter items
+        # Number of shortest destinations to take average from
+        sliderInput("slider_shortDest",
+                    label = "Shortest destinations to take average from",
+                    min = 1, max = 17, value = 2),
+        hr(),
+        radioButtons("duration_type", 
+                     label = "Investigate Accessibility Metric", 
+                     choices = c("SLDA", "Compare", "UBA")),
+        hr()
       ),
-      fillRow(
-        height = "30px",
-        checkboxInput("grid", "Grid", value = F, width = "100%"),
-        div()
+      div(
+        h4("Layers"),
+        fillRow(
+          height = "30px",
+          checkboxInput("lines", "Railway", value = T, width = "100%"),
+          checkboxInput("stations", "Stations", value = F, width = "100%")
+        ),
+        fillRow(
+          height = "30px",
+          checkboxInput("grid", "Grid", value = F, width = "100%"),
+          div()
+        )
       )
     )
   ),
@@ -133,69 +151,20 @@ ui = fillPage(
 # Server
 ####################
 server = function(input, output) {
-  output$mapDuration = renderLeaflet({
-    leaflet() %>% 
-      addProviderTiles(providers$Stamen.TonerLines) %>% 
-      addPolygons(data = hotels_aggr_all[[input$slider_shortDest]], 
-                  stroke = F,
-                  fillColor = ~pal_duration_diff(diff.mins),
-                  fillOpacity = 0.8) %>% 
-      addLegend(position = "topright",
-                title = "Underestimation <br> in timings for SLDA",
-                colors = pal_duration_diff(cvl_duration_diff),
-                labels = lab_duration_diff,
-                opacity = 1)
-  })
-  
-  output$mapReview = renderLeaflet({
-    leaflet() %>% 
-      addProviderTiles(providers$Stamen.TonerLines) %>% 
-      addPolygons(data = hotels_aggr_all[[1]],
-                  stroke = F,
-                  fillColor = ~pal_reviews(reviews.average),
-                  fillOpacity = 0.8) %>% 
-      addLegend(position = "topright",
-                title = "Average review scores",
-                colors = pal_reviews(cvl_reviews),
-                labels = lab_reviews,
-                opacity = 1)
-  })
-  
-  output$mapGwr = renderLeaflet({
-    # Data
-    data = hotels_aggr_gwr_est[[input$slider_shortDest]]
-    # Palette
-    rng = range(data$duration.avg)
-    sig = (((rng[1] - rng[2]) %>% abs() %>% log(10)) * -1) %>% ceiling()
-    if(rng[1] * rng[2] < 0) {
-      # Diverge around 0
-      m_rng = range(data$duration.avg) %>% abs() %>% max()
-      rng_gwr = c(-m_rng, m_rng)
-      pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
-    } else {
-      # Sequential
-      pal_gwr = colorBin(palette = "YlGn", domain = data$duration.avg, bins = 4)
-    }
-    
-    leaflet() %>%
-      addProviderTiles(providers$Stamen.TonerLines) %>% 
-      addPolygons(data = data,
-                  stroke = F,
-                  fillColor = ~pal_gwr(duration.avg),
-                  fillOpacity = 0.8) %>% 
-      addLegend(position = "topright",
-                title = "Coefficient estimate: <br> trip duration",
-                data = data,
-                pal = pal_gwr,
-                values = ~duration.avg,
-                labFormat = labelFormat(digits = sig))
-  })
-  
   output$map = renderLeaflet({
     # Default (init) is the review map
     leaflet() %>% 
-      addProviderTiles(providers$Stamen.TonerLines) %>% 
-      fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]])
+      addProviderTiles(providers$Stamen.TonerBackground) %>% 
+      fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]]) %>% 
+      addPolygons(group = "Reviews",
+                  data = hotels_aggr_all[[1]],
+                  stroke = F,
+                  fillColor = ~pal_reviews(reviews.average),
+                  fillOpacity = 0.8) %>% 
+      addPolylines(group = "lines",
+                   data = lines_sf,
+                   stroke = 2,
+                   color = ~col)
   })
   
   # Reactors
@@ -205,15 +174,10 @@ server = function(input, output) {
   observe({
     if(input$selectedTab == "review"){
       leafletProxy("map", data = hotels_aggr_all[[1]]) %>% 
-        clearGroup("duration") %>% 
-        clearGroup("gwr") %>% 
-        clearControls() %>% 
-        addPolygons(group = "review",
-                    stroke = F,
-                    fillColor = ~pal_reviews(reviews.average),
-                    fillOpacity = 0.8) %>%
-        addLegend(group = "review",
-                  position = "topright", 
+        hideGroup(c("SLDA", "Differences", "UBA", "GWR")) %>%  
+        clearControls() %>%
+        removeLayersControl() %>% 
+        addLegend(position = "topright", 
                   title = "Average review scores",
                   colors = pal_reviews(cvl_reviews),
                   labels = lab_reviews,
@@ -221,21 +185,102 @@ server = function(input, output) {
     }
     if(input$selectedTab == "duration"){
       leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
-        clearGroup("review") %>% 
-        clearGroup("gwr") %>% 
+        hideGroup(c("Reviews", "GWR")) %>% 
         clearControls() %>% 
-        addPolygons(group = "duration",
-                    stroke = F,
-                    fillColor = ~pal_duration_diff(diff.mins),
-                    fillOpacity = 0.8) %>% 
-        addLegend(group = "duration",
+        addLegend(group = "SLDA",
+                  position = "topright",
+                  title = "SLDA estimations",
+                  colors = pal_duration(cvl_duration),
+                  labels = lab_duration,
+                  opacity = 1) %>% 
+        addLegend(group = "Differences",
                   position = "topright",
                   title = "Underestimation <br> in timings for SLDA",
                   colors = pal_duration_diff(cvl_duration_diff),
                   labels = lab_duration_diff,
-                  opacity = 1)
+                  opacity = 1) %>% 
+        addLegend(group = "UBA",
+                  position = "topright",
+                  title = "UBA estimations",
+                  colors = pal_duration(cvl_duration),
+                  labels = lab_duration,
+                  opacity = 1) %>%
+        addLayersControl(baseGroups = c("SLDA", "Differences", "UBA"),
+                         options = layersControlOptions(collapsed = F))
     }
     if(input$selectedTab == "gwr"){
+      # Data
+      data = isolate(hotels_aggr_gwr_est[[input$slider_shortDest]])
+      # Palette
+      rng = range(data$duration.avg)
+      sig = (((rng[1] - rng[2]) %>% abs() %>% log(10)) * -1) %>% ceiling()
+      if(rng[1] * rng[2] < 0) {
+        # Diverge around 0
+        m_rng = range(data$duration.avg) %>% abs() %>% max()
+        rng_gwr = c(-m_rng, m_rng)
+        pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
+      } else {
+        # Sequential
+        pal_gwr = colorBin(palette = "YlGn", domain = data$duration.avg, bins = 4)
+      }
+      
+      leafletProxy("map", data = data) %>% 
+        hideGroup(c("Reviews", "SLDA", "Differences", "UBA")) %>% 
+        showGroup("GWR") %>% 
+        clearControls() %>% 
+        removeLayersControl() %>% 
+        addLegend(position = "topright",
+                  title = "Coefficient estimate: <br> trip duration",
+                  pal = pal_gwr,
+                  values = ~duration.avg,
+                  labFormat = labelFormat(digits = sig))
+    }
+  })
+  
+  observe({
+    if(input$lines){
+      leafletProxy("map", data = lines_sf) %>% 
+        addPolylines(group = "lines",
+                     stroke = 2,
+                     color = ~col)
+    } else {
+      leafletProxy("map") %>% 
+        clearGroup("lines")
+    }
+  })
+  
+  observe({
+    if(input$slider_shortDest){
+      ### Duration
+      leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
+        clearGroup(c("SLDA", "Differences", "UBA")) %>% 
+        addPolygons(group = "SLDA",
+                    stroke = F,
+                    fillColor = ~pal_duration(time.avg/60),
+                    fillOpacity = 0.8) %>% 
+        addPolygons(group = "Differences",
+                    stroke = F,
+                    fillColor = ~pal_duration_diff(diff.mins),
+                    fillOpacity = 0.8) %>% 
+        addPolygons(group = "UBA",
+                    stroke = F,
+                    fillColor = ~pal_duration(duration.avg/60),
+                    fillOpacity = 0.8) %>% 
+        hideGroup(c("SLDA", "Differences", "UBA"))
+      
+      if(isolate({input$selectedTab}) == "duration"){
+        if(isolate({input$duration_type}) == "SLDA"){
+          leafletProxy("map") %>% showGroup("SLDA")
+        }
+        if(isolate({input$duration_type}) == "Compare"){
+          leafletProxy("map") %>% showGroup("Differences")
+        }
+        if(isolate({input$duration_type}) == "UBA"){
+          leafletProxy("map") %>% showGroup("UBA")
+        }
+      }
+      
+      ### GWR
       # Data
       data = hotels_aggr_gwr_est[[input$slider_shortDest]]
       # Palette
@@ -252,19 +297,23 @@ server = function(input, output) {
       }
       
       leafletProxy("map", data = data) %>% 
-        clearGroup("review") %>% 
-        clearGroup("duration") %>% 
-        clearControls() %>% 
-        addPolygons(group = "gwr",
+        clearGroup("GWR") %>%  
+        addPolygons(group = "GWR",
                     stroke = F,
                     fillColor = ~pal_gwr(duration.avg),
-                    fillOpacity = 0.8) %>% 
-        addLegend(group = "gwr",
-                  position = "topright",
-                  title = "Coefficient estimate: <br> trip duration",
-                  pal = pal_gwr,
-                  values = ~duration.avg,
-                  labFormat = labelFormat(digits = sig))
+                    fillOpacity = 0.8)
+      
+      if(isolate({input$selectedTab}) == "gwr"){
+        leafletProxy("map", data = data) %>% 
+          clearControls() %>% 
+          addLegend(position = "topright",
+                    title = "Coefficient estimate: <br> trip duration",
+                    pal = pal_gwr,
+                    values = ~duration.avg,
+                    labFormat = labelFormat(digits = sig))
+      }else{
+        leafletProxy("map") %>% hideGroup("GWR")
+      }
     }
   })
 }
