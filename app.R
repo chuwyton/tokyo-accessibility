@@ -240,10 +240,10 @@ server = function(input, output) {
   observe({
     if(input$lines){
       leafletProxy("map") %>% 
-        hideGroup("lines")
+        showGroup("lines")
     } else {
       leafletProxy("map") %>% 
-        clearGroup("lines")
+        hideGroup("lines")
     }
   })
   
