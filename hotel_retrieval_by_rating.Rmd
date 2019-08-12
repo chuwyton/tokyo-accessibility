@@ -68,6 +68,28 @@ fromPlace = read_rds(here::here("data/fromPlace.rds")) %>% st_as_sf(coords = c("
 toPlace = read_rds(here::here("data/toPlace.rds")) %>% st_as_sf(coords = c("X", "Y")) %>% st_set_crs(4326)
 
 grid_routes_all_vars = read_rds(here::here("data/grid_routes_all_vars.rds"))
+
+stations_sf = read_csv(here::here("data/tokyo_trains/stops.txt")) %>% 
+  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+  st_transform(6677) %>% 
+  st_crop(c("xmin" = -13878.701, 
+            "ymin" = -44294.410,
+            "xmax" =   4500,
+            "ymax" = -27128.602)) %>% 
+  mutate(operator = map_chr(stop_id, ~str_split(.x, "\\.")[[1]][1])) %>% 
+  filter(operator %in% c("JR-East", "TokyoMetro", "Toei", "Merged")) %>% 
+  mutate(line = map_chr(stop_id, ~str_split(.x, "\\.")[[1]][2])) %>% 
+  filter(line %in% c("Yamanote", "ChuoRapid", "KeihinTohokuNegishi", "Keiyo",
+                     "Ginza", "Marunouchi", "Hibiya", "Tozai", "Chiyoda",
+                     "Yurakucho", "Hanzomon", "Namboku", "Fukutoshin",
+                     "Asakusa", "Mita", "Shinjuku", "Oedo") |
+           operator == "Merged") %>% 
+  filter(operator != "Merged" | stop_id %in% .$parent_station %>% unique()) %>% 
+  replace_na(list(location_type = -1)) %>% 
+  filter(location_type != 0) %>% 
+  mutate(name_en = str_extract(stop_id, "(?<=\\.)\\w*?$")) %>% 
+  select(name_en, name_ja = stop_name) %>% 
+  mutate(name_en = str_replace_all(name_en, "(?<=[a-z])(?=[A-Z])", "-"))
 ```
 
 #Non-Spatial Analysis

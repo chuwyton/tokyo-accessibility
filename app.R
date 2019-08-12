@@ -52,6 +52,7 @@ hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>%
 
 lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
 destinations_sf = read_rds("data/destinations_sf.rds") %>% st_transform(4326)
+stations_sf = read_rds("data/stations_sf.rds") %>% st_transform(4326)
 
 # Palettes, Legends and Colors
 bin_duration = c(0, 5, 10, 15, 20, 30, 45, 60, Inf)
@@ -170,6 +171,12 @@ server = function(input, output) {
                        data = destinations_sf,
                        stroke = F,
                        fillColor = "Red",
+                       fillOpacity = 1,
+                       radius = 3) %>% 
+      addCircleMarkers(group = "stations",
+                       data = stations_sf,
+                       stroke = F,
+                       fillColor = "Black",
                        fillOpacity = 1,
                        radius = 3)
   })
@@ -413,6 +420,17 @@ server = function(input, output) {
     }else{
       leafletProxy("map") %>% 
         hideGroup("destinations")
+    }
+  })
+  
+  # Toggle Stations
+  observe({
+    if(input$stations){
+      leafletProxy("map") %>% 
+        showGroup("stations")
+    }else{
+      leafletProxy("map") %>% 
+        hideGroup("stations")
     }
   })
 }
