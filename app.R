@@ -162,7 +162,9 @@ server = function(input, output) {
                   data = hotels_aggr_all[[1]],
                   stroke = F,
                   fillColor = ~pal_reviews(reviews.average),
-                  fillOpacity = 0.8) %>% 
+                  fillOpacity = 0.8,
+                  label = ~format(reviews.average, digits = 3),
+                  labelOptions = labelOptions()) %>% 
       # addPolylines(group = "lines",
       #              data = lines_sf,
       #              stroke = 2,
@@ -271,15 +273,21 @@ server = function(input, output) {
         addPolygons(group = "SLDA",
                     stroke = F,
                     fillColor = ~pal_duration(time.avg/60),
-                    fillOpacity = 0.8) %>% 
+                    fillOpacity = 0.8,
+                    label = ~format(time.avg/60, digits = 3),
+                    labelOptions = labelOptions()) %>% 
         addPolygons(group = "Differences",
                     stroke = F,
                     fillColor = ~pal_duration_diff(diff.mins),
-                    fillOpacity = 0.8) %>% 
+                    fillOpacity = 0.8,
+                    label = ~format(diff.mins, digits = 3),
+                    labelOptions = labelOptions()) %>% 
         addPolygons(group = "UBA",
                     stroke = F,
                     fillColor = ~pal_duration(duration.avg/60),
-                    fillOpacity = 0.8) %>% 
+                    fillOpacity = 0.8,
+                    label = ~format(duration.avg/60, digits = 3),
+                    labelOptions = labelOptions()) %>% 
         hideGroup(c("SLDA", "Differences", "UBA"))
       
       # If duration is the selected tab, show group and redraw legend
@@ -340,7 +348,9 @@ server = function(input, output) {
         addPolygons(group = "GWR",
                     stroke = F,
                     fillColor = ~pal_gwr(duration.avg),
-                    fillOpacity = 0.8)
+                    fillOpacity = 0.8,
+                    label = ~format(duration.avg, digits = 3),
+                    labelOptions = labelOptions())
       
       # If gwr is the selected tab, draw legend
       if(isolate({input$selectedTab}) == "gwr"){
