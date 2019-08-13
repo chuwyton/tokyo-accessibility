@@ -163,10 +163,10 @@ server = function(input, output) {
                   stroke = F,
                   fillColor = ~pal_reviews(reviews.average),
                   fillOpacity = 0.8) %>% 
-      addPolylines(group = "lines",
-                   data = lines_sf,
-                   stroke = 2,
-                   color = ~col) %>% 
+      # addPolylines(group = "lines",
+      #              data = lines_sf,
+      #              stroke = 2,
+      #              color = ~col) %>% 
       addCircleMarkers(group = "destinations",
                        data = destinations_sf,
                        stroke = F,
@@ -402,15 +402,15 @@ server = function(input, output) {
   })
   
   # Toggle lines
-  observe({
-    if(input$lines){
-      leafletProxy("map") %>% 
-        showGroup("lines")
-    } else {
-      leafletProxy("map") %>% 
-        hideGroup("lines")
-    }
-  })
+  # observe({
+  #   if(input$lines){
+  #     leafletProxy("map") %>% 
+  #       showGroup("lines")
+  #   } else {
+  #     leafletProxy("map") %>% 
+  #       hideGroup("lines")
+  #   }
+  # })
   
   # Toggle Destinations
   observe({
@@ -424,15 +424,15 @@ server = function(input, output) {
   })
   
   # Toggle Stations
-  # observe({
-  #   if(input$stations){
-  #     leafletProxy("map") %>% 
-  #       showGroup("stations")
-  #   }else{
-  #     leafletProxy("map") %>% 
-  #       hideGroup("stations")
-  #   }
-  # })
+  observe({
+    if(input$stations){
+      leafletProxy("map") %>%
+        showGroup("stations")
+    }else{
+      leafletProxy("map") %>%
+        hideGroup("stations")
+    }
+  })
 }
 
 ####################
