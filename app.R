@@ -50,7 +50,7 @@ hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>%
                                 TRUE    ~ 0.8))) %>% 
     rename_at(vars(contains("_a")), ~str_replace_all(., "_a", ".a")))
 
-lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
+# lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
 destinations_sf = read_rds("data/destinations_sf.rds") %>% st_transform(4326)
 stations_sf = read_rds("data/stations_sf.rds") %>% st_transform(4326)
 
@@ -424,15 +424,15 @@ server = function(input, output) {
   })
   
   # Toggle Stations
-  observe({
-    if(input$stations){
-      leafletProxy("map") %>% 
-        showGroup("stations")
-    }else{
-      leafletProxy("map") %>% 
-        hideGroup("stations")
-    }
-  })
+  # observe({
+  #   if(input$stations){
+  #     leafletProxy("map") %>% 
+  #       showGroup("stations")
+  #   }else{
+  #     leafletProxy("map") %>% 
+  #       hideGroup("stations")
+  #   }
+  # })
 }
 
 ####################
