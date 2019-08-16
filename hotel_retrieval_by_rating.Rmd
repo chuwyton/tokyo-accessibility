@@ -46,13 +46,14 @@ yamanote_area_grid = yamanote_area %>%
   st_sf() %>% 
   rowid_to_column("grid.id")
 
-lines_sf = rbind(yamanote_sf, chuo_sf, keihintohoku_sf) %>% 
-  st_join(yamanote_area_grid) %>% 
-  na.omit() %>% 
-  mutate(col = case_when(name.en == "Yamanote Line"      ~ "#80c241",
-                         name.en == "JR Chuo Line"       ~ "#f15a22",
-                         name.en == "Chuo Line"          ~ "#f15a22",
-                         name.en == "Keihin-Tohoku Line" ~ "#00b2e5"))
+# lines_sf = rbind(yamanote_sf, chuo_sf, keihintohoku_sf) %>% 
+#   st_join(yamanote_area_grid) %>% 
+#   na.omit() %>% 
+#   mutate(col = case_when(name.en == "Yamanote Line"      ~ "#80c241",
+#                          name.en == "JR Chuo Line"       ~ "#f15a22",
+#                          name.en == "Chuo Line"          ~ "#f15a22",
+#                          name.en == "Keihin-Tohoku Line" ~ "#00b2e5"))
+lines_sf = read_rds(here::hre("data/lines_sf.rds"))
 
 tm_base = tm_shape(lines_sf) +
   tm_sf(col = "col", alpha = 0.4) +
@@ -69,27 +70,28 @@ toPlace = read_rds(here::here("data/toPlace.rds")) %>% st_as_sf(coords = c("X", 
 
 grid_routes_all_vars = read_rds(here::here("data/grid_routes_all_vars.rds"))
 
-stations_sf = read_csv(here::here("data/stops.txt")) %>% 
-  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
-  st_transform(6677) %>% 
-  st_crop(c("xmin" = -13878.701, 
-            "ymin" = -44294.410,
-            "xmax" =   4500,
-            "ymax" = -27128.602)) %>% 
-  mutate(operator = map_chr(stop_id, ~str_split(.x, "\\.")[[1]][1])) %>% 
-  filter(operator %in% c("JR-East", "TokyoMetro", "Toei", "Merged")) %>% 
-  mutate(line = map_chr(stop_id, ~str_split(.x, "\\.")[[1]][2])) %>% 
-  filter(line %in% c("Yamanote", "ChuoRapid", "KeihinTohokuNegishi", "Keiyo",
-                     "Ginza", "Marunouchi", "Hibiya", "Tozai", "Chiyoda",
-                     "Yurakucho", "Hanzomon", "Namboku", "Fukutoshin",
-                     "Asakusa", "Mita", "Shinjuku", "Oedo") |
-           operator == "Merged") %>% 
-  filter(operator != "Merged" | stop_id %in% .$parent_station %>% unique()) %>% 
-  replace_na(list(location_type = -1)) %>% 
-  filter(location_type != 0) %>% 
-  mutate(name_en = str_extract(stop_id, "(?<=\\.)\\w*?$")) %>% 
-  select(name_en, name_ja = stop_name) %>% 
-  mutate(name_en = str_replace_all(name_en, "(?<=[a-z])(?=[A-Z])", "-"))
+# stations_sf = read_csv(here::here("data/stops.txt")) %>% 
+#   st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+#   st_transform(6677) %>% 
+#   st_crop(c("xmin" = -13878.701, 
+#             "ymin" = -44294.410,
+#             "xmax" =   4500,
+#             "ymax" = -27128.602)) %>% 
+#   mutate(operator = map_chr(stop_id, ~str_split(.x, "\\.")[[1]][1])) %>% 
+#   filter(operator %in% c("JR-East", "TokyoMetro", "Toei", "Merged")) %>% 
+#   mutate(line = map_chr(stop_id, ~str_split(.x, "\\.")[[1]][2])) %>% 
+#   filter(line %in% c("Yamanote", "ChuoRapid", "KeihinTohokuNegishi", "Keiyo",
+#                      "Ginza", "Marunouchi", "Hibiya", "Tozai", "Chiyoda",
+#                      "Yurakucho", "Hanzomon", "Namboku", "Fukutoshin",
+#                      "Asakusa", "Mita", "Shinjuku", "Oedo") |
+#            operator == "Merged") %>% 
+#   filter(operator != "Merged" | stop_id %in% .$parent_station %>% unique()) %>% 
+#   replace_na(list(location_type = -1)) %>% 
+#   filter(location_type != 0) %>% 
+#   mutate(name_en = str_extract(stop_id, "(?<=\\.)\\w*?$")) %>% 
+#   select(name_en, name_ja = stop_name) %>% 
+#   mutate(name_en = str_replace_all(name_en, "(?<=[a-z])(?=[A-Z])", "-"))
+stations_sf = read_rds(here::here("data/stations_sf.rds"))
 ```
 
 #Non-Spatial Analysis
@@ -404,9 +406,9 @@ hotels_aggr_all = map2(hotels_aggr_all, hotels_aggr_sld,
                          left_join(yamanote_area_grid) %>% 
                          st_as_sf(crs = 6677)) 
 tm_shape(hotels_aggr_all[[2]]) +
-  tm_fill(col="diff.mins", breaks = c(-30, -15, -10, -5, -1, 0), palette="-inferno", alpha=0.8) +
+  tm_fill(col="diff.mins", breaks = c(-30, -15, -10, -5, -1, 0), palette="-inferno", alpha=0.8, title = "Difference (mins)") +
   tm_layout(title="Difference between SLD time and UBA time estimates") +
-  tm_base_mono
+  tm_base
 
 hotels_aggr_all[[2]] %>%  
   mutate(duration.avg.min = duration.avg/60) %>% 
