@@ -50,9 +50,10 @@ hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>%
                                 TRUE    ~ 0.8))) %>% 
     rename_at(vars(contains("_a")), ~str_replace_all(., "_a", ".a")))
 
-# lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
+lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
 destinations_sf = read_rds("data/destinations_sf.rds") %>% st_transform(4326)
 stations_sf = read_rds("data/stations_sf.rds") %>% st_transform(4326)
+labels_sf = read_rds("data/labels_sf.rds") %>% st_transform(4326)
 
 # Palettes, Legends and Colors
 bin_duration = c(0, 5, 10, 15, 20, 30, 45, 60, Inf)
@@ -84,11 +85,11 @@ ui = fillPage(
   navbarPage(
     fluid = F,
     position = "fixed-top",
-    title = "Visualizations",
+    title = "HotelVis",
     id = "selectedTab",
     tabPanel(
-      title = "Review Scores",
-      value = "review",
+      title = "Hotel Attributes",
+      value = "overall",
       div()
     ),
     tabPanel(
@@ -119,15 +120,41 @@ ui = fillPage(
       div(
         h4("Map-specific Options"),
         # Filter items
+        
+        # Select Factor (Overall)
+        selectInput("select_factor_overall",
+                    label = "Show Factor",
+                    choices = c("Review Scores",
+                                "Room Rates",
+                                "Star Rating",
+                                "Trip Duration",
+                                "Trip Fare",
+                                "Trip Transfers")),
+        
+        # Select Accessibility Metric
+        selectInput("select_duration_type", 
+                     label = "Investigate Accessibility Metric", 
+                     choices = c("SLDA", "Compare", "UBA")),
+        
+        # Select Factor (GWR)
+        selectInput("select_factor_gwr",
+                    label = "Show Factor",
+                    choices = c("Room Rates",
+                                "Star Rating",
+                                "Room Rates * Star Rating",
+                                "Trip Duration",
+                                "Trip Fare",
+                                "Trip Transfers")),
+        
         # Number of shortest destinations to take average from
         sliderInput("slider_shortDest",
                     label = "Shortest destinations to take average from",
                     min = 1, max = 17, value = 2),
-        hr(),
-        radioButtons("duration_type", 
-                     label = "Investigate Accessibility Metric", 
-                     choices = c("SLDA", "Compare", "UBA")),
-        hr()
+        
+        # Greying out non-significant grids (GWR)
+        sliderInput("slider_pval",
+                    label = "Grey out p-values above",
+                    min = 0, max = 50, value = 5)
       ),
       div(
         h4("Layers"),
@@ -158,7 +185,7 @@ server = function(input, output) {
     leaflet() %>% 
       addProviderTiles(providers$Stamen.TonerLite, options = tileOptions(opacity = 0.5)) %>% 
       fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]]) %>% 
-      addPolygons(group = "Reviews",
+      addPolygons(group = "Overall",
                   data = hotels_aggr_all[[1]],
                   stroke = F,
                   fillColor = ~pal_reviews(reviews.average),
@@ -189,23 +216,46 @@ server = function(input, output) {
   ### Observers
   # Change in selected tab
   observe({
-    if(input$selectedTab == "review"){
+    if(input$selectedTab == "overall"){
+      variab = input$select_factor_overall
+      var = case_when(variab == "Review Scores" ~ "reviews.average",
+                      variab == "Room Rates" ~ "price.lead.average",
+                      variab == "Star Rating" ~ "star.average",
+                      variab == "Room Rates * Star Rating" ~ "price.lead.average.star.average",
+                      variab == "Trip Duration" ~ "duration.avg",
+                      variab == "Trip Fare" ~ "fare.avg",
+                      variab == "Trip Transfers" ~ "transfers.avg")
+      col = hotels_aggr_all[[1]][[var]]
+      print(range(col))
+      pal = colorBin(palette = "Blues", 
+                     domain = range(col), 
+                     bins = 6,
+                     pretty = T)
+      
       leafletProxy("map", data = hotels_aggr_all[[1]]) %>% 
         hideGroup(c("SLDA", "Differences", "UBA", "GWR")) %>% 
-        showGroup("Reviews") %>% 
+        showGroup("Overall") %>% 
+        clearGroup("Overall") %>% 
         clearControls() %>%
+        addPolygons(group = "Overall",
+                    data = hotels_aggr_all[[1]],
+                    stroke = F,
+                    fillColor = pal(col),
+                    fillOpacity = 0.8,
+                    label = format(col, digits = 3),
+                    labelOptions = labelOptions()) %>%
         addLegend(position = "topright", 
-                  title = "Average review scores",
-                  colors = pal_reviews(cvl_reviews),
-                  labels = lab_reviews,
+                  title = str_glue("Average {variab}"),
+                  pal = pal,
+                  values = col,
                   opacity = 1)
     }
     if(input$selectedTab == "duration"){
       leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
-        hideGroup(c("Reviews", "GWR")) %>% 
+        hideGroup(c("Overall", "GWR")) %>% 
         clearControls()
       
-      if(isolate({input$duration_type}) == "SLDA"){
+      if(isolate({input$select_duration_type}) == "SLDA"){
         leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
           showGroup("SLDA") %>% 
           addLegend(group = "SLDA",
@@ -215,7 +265,7 @@ server = function(input, output) {
                     labels = lab_duration,
                     opacity = 1)
       }
-      if(isolate({input$duration_type}) == "Compare"){
+      if(isolate({input$select_duration_type}) == "Compare"){
         leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
           showGroup("Differences") %>% 
           addLegend(group = "Differences",
@@ -225,7 +275,7 @@ server = function(input, output) {
                     labels = lab_duration_diff,
                     opacity = 1)
       }
-      if(isolate({input$duration_type}) == "UBA"){
+      if(isolate({input$select_duration_type}) == "UBA"){
         leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
           showGroup("UBA") %>% 
           addLegend(group = "UBA",
@@ -237,31 +287,19 @@ server = function(input, output) {
       }
     }
     if(input$selectedTab == "gwr"){
-      # Data
-      data = isolate(hotels_aggr_gwr_est[[input$slider_shortDest]])
-      # Palette
-      rng = range(data$duration.avg)
-      sig = (((rng[1] - rng[2]) %>% abs() %>% log(10)) * -1) %>% ceiling()
-      if(rng[1] * rng[2] < 0) {
-        # Diverge around 0
-        m_rng = range(data$duration.avg) %>% abs() %>% max()
-        rng_gwr = c(-m_rng, m_rng)
-        pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
-      } else {
-        # Sequential
-        pal_gwr = colorBin(palette = "YlGn", domain = data$duration.avg, bins = 4)
-      }
-      
-      leafletProxy("map", data = data) %>% 
-        hideGroup(c("Reviews", "SLDA", "Differences", "UBA")) %>% 
-        showGroup("GWR") %>% 
-        clearControls() %>% 
-        addLegend(position = "topright",
-                  title = "Coefficient estimate: <br> trip duration",
-                  pal = pal_gwr,
-                  values = ~duration.avg,
-                  labFormat = labelFormat(digits = sig))
+      redrawGWR(isolate({input$slider_shortDest}), 
+                isolate({input$select_factor_gwr}),
+                isolate({input$selectedTab}))
+      leafletProxy("map") %>% 
+        hideGroup(c("Overall", "SLDA", "Differences", "UBA")) %>% 
+        showGroup("GWR")
     }
+    
+    toggle("slider_shortDest", condition = input$selectedTab %in% c("duration", "gwr"))
+    toggle("slider_pval", condition = input$selectedTab == "gwr")
+    toggle("select_duration_type", condition = input$selectedTab == "duration")
+    toggle("select_factor_gwr", condition = input$selectedTab == "gwr")
+    toggle("select_factor_overall", condition = input$selectedTab == "overall")
   })
   
   # Change in shortest destinations slider value
@@ -292,7 +330,7 @@ server = function(input, output) {
       
       # If duration is the selected tab, show group and redraw legend
       if(isolate({input$selectedTab}) == "duration"){
-        if(isolate({input$duration_type}) == "SLDA"){
+        if(isolate({input$select_duration_type}) == "SLDA"){
           leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
             showGroup("SLDA") %>% 
             clearControls() %>% 
@@ -303,7 +341,7 @@ server = function(input, output) {
                       labels = lab_duration,
                       opacity = 1)
         }
-        if(isolate({input$duration_type}) == "Compare"){
+        if(isolate({input$select_duration_type}) == "Compare"){
           leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
             showGroup("Differences") %>% 
             clearControls() %>% 
@@ -314,7 +352,7 @@ server = function(input, output) {
                       labels = lab_duration_diff,
                       opacity = 1)
         }
-        if(isolate({input$duration_type}) == "UBA"){
+        if(isolate({input$select_duration_type}) == "UBA"){
           leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
             showGroup("UBA") %>% 
             clearControls() %>% 
@@ -328,51 +366,18 @@ server = function(input, output) {
       }
       
       ### GWR
-      # Data
-      data = hotels_aggr_gwr_est[[input$slider_shortDest]]
-      # Palette
-      rng = range(data$duration.avg)
-      sig = (((rng[1] - rng[2]) %>% abs() %>% log(10)) * -1) %>% ceiling()
-      if(rng[1] * rng[2] < 0) {
-        # Diverge around 0
-        m_rng = range(data$duration.avg) %>% abs() %>% max()
-        rng_gwr = c(-m_rng, m_rng)
-        pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
-      } else {
-        # Sequential
-        pal_gwr = colorBin(palette = "YlGn", domain = data$duration.avg, bins = 4)
-      }
-      
-      leafletProxy("map", data = data) %>% 
-        clearGroup("GWR") %>%  
-        addPolygons(group = "GWR",
-                    stroke = F,
-                    fillColor = ~pal_gwr(duration.avg),
-                    fillOpacity = 0.8,
-                    label = ~format(duration.avg, digits = 3),
-                    labelOptions = labelOptions())
-      
-      # If gwr is the selected tab, draw legend
-      if(isolate({input$selectedTab}) == "gwr"){
-        leafletProxy("map", data = data) %>% 
-          clearControls() %>% 
-          addLegend(position = "topright",
-                    title = "Coefficient estimate: <br> trip duration",
-                    pal = pal_gwr,
-                    values = ~duration.avg,
-                    labFormat = labelFormat(digits = sig))
-      }else{
-        leafletProxy("map") %>% hideGroup("GWR")
-      }
+      redrawGWR(isolate({input$slider_shortDest}), 
+                isolate({input$select_factor_gwr}),
+                isolate({input$selectedTab}))
     }
   })
   
   # Change in accessibility metric
   observe({
-    input$duration_type
+    input$select_duration_type
     if(isolate({input$selectedTab}) == "duration"){
       data = hotels_aggr_all[[isolate({input$slider_shortDest})]]
-      if(input$duration_type == "SLDA"){
+      if(input$select_duration_type == "SLDA"){
         leafletProxy("map", data = data) %>%
           hideGroup(c("Differences", "UBA")) %>% 
           showGroup("SLDA") %>% 
@@ -384,7 +389,7 @@ server = function(input, output) {
                     labels = lab_duration,
                     opacity = 1)
       }
-      if(input$duration_type == "Compare"){
+      if(input$select_duration_type == "Compare"){
         leafletProxy("map", data = data) %>% 
           hideGroup(c("SLDA", "UBA")) %>% 
           showGroup("Differences") %>% 
@@ -396,7 +401,7 @@ server = function(input, output) {
                     labels = lab_duration_diff,
                     opacity = 1)
       }
-      if(input$duration_type == "UBA"){
+      if(input$select_duration_type == "UBA"){
         leafletProxy("map", data = data) %>% 
           hideGroup(c("SLDA", "Differences")) %>% 
           showGroup("UBA") %>% 
@@ -411,16 +416,23 @@ server = function(input, output) {
     }
   })
   
+  # Change in GWR factor
+  observe({
+    redrawGWR(isolate({input$slider_shortDest}), 
+              input$select_factor_gwr,
+              isolate({input$selectedTab}))
+  })
+  
   # Toggle lines
-  # observe({
-  #   if(input$lines){
-  #     leafletProxy("map") %>% 
-  #       showGroup("lines")
-  #   } else {
-  #     leafletProxy("map") %>% 
-  #       hideGroup("lines")
-  #   }
-  # })
+  observe({
+    if(input$lines){
+      leafletProxy("map") %>%
+        showGroup("lines")
+    } else {
+      leafletProxy("map") %>%
+        hideGroup("lines")
+    }
+  })
   
   # Toggle Destinations
   observe({
@@ -443,6 +455,54 @@ server = function(input, output) {
         hideGroup("stations")
     }
   })
+}
+
+### Functions
+redrawGWR = function(shortDest, variab, selectedTab, pval) {
+  var = case_when(variab == "Room Rates" ~ "price.lead.average",
+                  variab == "Star Rating" ~ "star.average",
+                  variab == "Room Rates * Star Rating" ~ "price.lead.average.star.average",
+                  variab == "Trip Duration" ~ "duration.avg",
+                  variab == "Trip Fare" ~ "fare.avg",
+                  variab == "Trip Transfers" ~ "transfers.avg")
+  # Get Data
+  data = hotels_aggr_gwr_est[[shortDest]]
+  col = data[[var]]
+  # Palette
+  rng = range(col)
+  sig = (((rng[1] - rng[2]) %>% abs() %>% log(10)) * -1) %>% ceiling() + 1
+  if(rng[1] * rng[2] < 0) {
+    # Diverge around 0
+    m_rng = range(col) %>% abs() %>% max()
+    rng_gwr = c(-m_rng, m_rng)
+    pal_gwr = colorBin(palette = "PiYG", domain = rng_gwr, bins = 4)
+  } else {
+    # Sequential
+    pal_gwr = colorBin(palette = "YlGn", domain = col, bins = 4)
+  }
+  
+  leafletProxy("map") %>% 
+    clearGroup("GWR") %>%  
+    addPolygons(group = "GWR", data = data,
+                stroke = F,
+                fillColor = pal_gwr(col),
+                fillOpacity = 0.8,
+                label = format(col, digits = 3),
+                labelOptions = labelOptions())
+  
+  
+  # If gwr is the selected tab, draw legend
+  if(selectedTab == "gwr"){
+    leafletProxy("map") %>% 
+      clearControls() %>% 
+      addLegend(position = "topright",
+                title = str_glue("Coefficient estimate: <br> {variab}"),
+                pal = pal_gwr,
+                values = col,
+                labFormat = labelFormat(digits = sig))
+  }else{
+    leafletProxy("map") %>% hideGroup("GWR")
+  }
 }
 
 ####################
