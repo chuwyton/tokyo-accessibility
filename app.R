@@ -68,13 +68,18 @@ cvl_duration_diff = c(     -45,    -20,    -12,    -7,   -3,   -0.5,  1)
 pal_duration_diff = colorBin(palette = "inferno", bins = bin_duration_diff)
 lab_duration_diff = c(">30 minutes", ">15", ">10", ">5", ">1 minute", "<1 minute", "Overestimation")
 
-bin_reviews = seq(3, 5, 0.5)
-cvl_reviews = seq(3.25, 4.75, 0.5)
-pal_reviews = colorBin(palette = "Blues", bins = bin_reviews)
-lab_reviews = map2_chr(bin_reviews[1:4], bin_reviews[2:5], ~str_glue("{.x} \u2013 {.y}"))
+# bin_reviews = seq(3, 5, 0.5)
+# cvl_reviews = seq(3.25, 4.75, 0.5)
+# pal_reviews = colorBin(palette = "Blues", bins = bin_reviews)
+# lab_reviews = map2_chr(bin_reviews[1:4], bin_reviews[2:5], ~str_glue("{.x} \u2013 {.y}"))
 
 # Bounding Box
 bbox = hotels_aggr_all[[1]] %>% st_bbox()
+
+# Text
+map_details = c("493 hotels from Expedia.com were used in this analysis, binned into 177 grids as shown on the map. In this map, you can look at the different average hotel attributes of each, such as its review score or star rating, by selecting the factor to view above.",
+                "This map shows the average time taken from each grid's centre to the 17 different destinations in the analysis. There are different ways to calculate it; SLDA (straight-line distance accessibility) calculates the geographic distance, whereas UBA (utility-based accessibility) calculates the time taken by travelling along the railway network. You can even compare between the two metrics when selecting the type of accessibility, and also choose how many closest destinations to include in the calculation.",
+                "This map shows the results of applying a Geographically Weighted Regression to the dataset, by including utility-based accessibility as one of the factors, on top of the factors in the hotel attributes. Each factor attempts to explain the local variations in review ratings; the map shows how significant the factor is in different parts of the map; greyed-out areas correspond to insignificant values. The colour shows how the factor correlates to the review price. For example, for a value of -0.0004 for the factor of trip duration, it means that each second's increase in average trip duration decreases the review rating by 0.0004, on average.")
 
 ####################
 # UI
@@ -117,9 +122,11 @@ ui = fillPage(
     
     # Sidebar Panel (Filter)
     fillCol(
-      flex = 1,
-      width = "200px",
-      div(
+      flex = c(4, 2, 3),
+      width = "400px",
+      height = "100%",
+      class = "sidebar",
+      wellPanel(
         h4("Map-specific Options"),
         # Filter items
         
@@ -158,24 +165,25 @@ ui = fillPage(
                     label = "Grey out p-values above",
                     min = 0, max = 50, value = 5)
       ),
-      div(
+      wellPanel(
         h4("Layers"),
-        fillRow(
-          height = "30px",
-          checkboxInput("lines", "Railway", value = T, width = "100%"),
-          checkboxInput("stations", "Stations", value = F, width = "100%")
-        ),
-        fillRow(
-          height = "30px",
-          checkboxInput("grid", "Grid", value = F, width = "100%"),
-          checkboxInput("destinations", "Destinations", value = T, width = "100%")
-        )
+        checkboxInput("lines", "Railway", value = T, width = "100%"),
+        checkboxInput("stations", "Stations", value = F, width = "100%"),
+        checkboxInput("grid", "Grid", value = F, width = "100%"),
+        checkboxInput("destinations", "Destinations", value = T, width = "100%")
+      ),
+      wellPanel(
+        h4("About this map"),
+        textOutput("map_detail")
       )
     )
   ),
   
   # Styling
-  tags$style(type="text/css", "body {padding-top: 50px}")
+  tags$style(type="text/css",
+             "body {padding-top: 50px}",
+             ".sidebar .flexfill-item .flexfill-item-inner {padding: 5px}",
+             ".well {height:100%; padding:8px; overflow:auto;}")
 )
 
 ####################
@@ -210,6 +218,10 @@ server = function(input, output) {
                        fillColor = "Black",
                        fillOpacity = 1,
                        radius = 3)
+  })
+  
+  output$map_detail = renderText({
+    map_details[match(input$selectedTab, c("overall", "duration", "gwr"))]
   })
   
   ### Reactors
@@ -519,13 +531,11 @@ redrawGWR = function(shortDest, variab, selectedTab, pval) {
                          variab == "Room Rates * Star Rating" ~ "price.lead.average.star.pval",
                          variab == "Trip Duration" ~ "duration.pval",
                          variab == "Trip Fare" ~ "fare.pval",
-                         variab == "Trip Transfers" ~ "transfers.pval") 
-    print(pval)
+                         variab == "Trip Transfers" ~ "transfers.pval")
     if(pval > 0){
+      print("Drawing pval mask...")
       data_pval = data %>% 
         filter((!!as.name(var_pval)) > pval)
-      
-      print(nrow(data_pval))
       
       leafletProxy("map", data = data_pval) %>% 
         clearGroup("GWR_pval") %>% 
