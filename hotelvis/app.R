@@ -216,11 +216,11 @@ server = function(input, output) {
                        stroke = F,
                        fillColor = "Black",
                        fillOpacity = 1,
-                       radius = 3) %>% 
-      addLabelOnlyMarkers(group = "stations",
-                          data = labels_sf,
-                          label = ~name_en,
-                          labelOptions = labelOptions(noHide = T, direction = "top", textOnly = T)) 
+                       radius = 3) 
+      # addLabelOnlyMarkers(group = "stations",
+      #                     data = labels_sf,
+      #                     label = ~name_en,
+      #                     labelOptions = labelOptions(noHide = T, direction = "top", textOnly = T)) 
     
   })
   
@@ -238,11 +238,10 @@ server = function(input, output) {
       variab = input$select_factor_overall
       var = case_when(variab == "Review Scores" ~ "reviews.average",
                       variab == "Room Rates" ~ "price.lead.average",
-                      variab == "Star Rating" ~ "star.average",
-                      variab == "Room Rates * Star Rating" ~ "price.lead.average.star.average",
-                      variab == "Trip Duration" ~ "duration.avg",
-                      variab == "Trip Fare" ~ "fare.avg",
-                      variab == "Trip Transfers" ~ "transfers.avg")
+                      variab == "Star Rating" ~ "star.average")
+      unit = case_when(variab == "Review Scores" ~ "",
+                       variab == "Room Rates" ~ "(S$)",
+                       variab == "Star Rating" ~ "")
       col = hotels_aggr_all[[1]][[var]]
       pal = colorBin(palette = "Blues", 
                      domain = range(col), 
@@ -262,7 +261,7 @@ server = function(input, output) {
                     label = format(col, digits = 3),
                     labelOptions = labelOptions()) %>%
         addLegend(position = "topright", 
-                  title = str_glue("Average {variab}"),
+                  title = str_glue("Average {variab} {unit}"),
                   pal = pal,
                   values = col,
                   opacity = 1)
@@ -505,6 +504,13 @@ redrawGWR = function(shortDest, variab, selectedTab, pval) {
                   variab == "Trip Duration" ~ "duration.avg",
                   variab == "Trip Fare" ~ "fare.avg",
                   variab == "Trip Transfers" ~ "transfers.avg")
+  unit = case_when(variab == "Room Rates" ~ "(per S$)",
+                   variab == "Star Rating" ~ "(per star)",
+                   variab == "Room Rates * Star Rating" ~ "(per S$ per star)",
+                   variab == "Trip Duration" ~ "(per second)",
+                   variab == "Trip Fare" ~ "(per ¥)",
+                   variab == "Trip Transfers" ~ "(per transfer)")
+  
   # Get Data
   data = hotels_aggr_gwr_est[[shortDest]]
   col = data[[var]]
@@ -535,7 +541,7 @@ redrawGWR = function(shortDest, variab, selectedTab, pval) {
     leafletProxy("map") %>% 
       clearControls() %>% 
       addLegend(position = "topright",
-                title = str_glue("Coefficient estimate: <br> {variab}"),
+                title = str_glue("Coefficient estimate: <br> {variab} {unit}"),
                 pal = pal_gwr,
                 values = col,
                 labFormat = labelFormat(digits = sig))
