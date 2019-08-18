@@ -92,7 +92,7 @@ ui = fillPage(
   navbarPage(
     fluid = F,
     position = "fixed-top",
-    title = "HotelVis",
+    title = "Tokyo HotelVis",
     id = "selectedTab",
     tabPanel(
       title = "Hotel Attributes",
