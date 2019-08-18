@@ -55,7 +55,7 @@ hotels_aggr_gwr_est = map2(hotels_aggr_gwr, hotels_aggr_gwr_edf, ~.x$SDF %>%
 lines_sf = read_rds("data/lines_sf.rds") %>% st_transform(4326)
 destinations_sf = read_rds("data/destinations_sf.rds") %>% st_transform(4326)
 stations_sf = read_rds("data/stations_sf.rds") %>% st_transform(4326)
-labels_sf = read_rds("data/labels_sf.rds") %>% st_transform(4326)
+# labels_sf = read_rds("data/labels_sf.rds") %>% st_transform(4326)
 
 # Palettes, Legends and Colors
 bin_duration = c(0, 5, 10, 15, 20, 30, 45, 60, Inf)
@@ -135,10 +135,7 @@ ui = fillPage(
                     label = "Show Factor",
                     choices = c("Review Scores",
                                 "Room Rates",
-                                "Star Rating",
-                                "Trip Duration",
-                                "Trip Fare",
-                                "Trip Transfers")),
+                                "Star Rating")),
         
         # Select Accessibility Metric
         selectInput("select_duration_type", 
@@ -194,14 +191,16 @@ server = function(input, output) {
     # Default (init) is the review map
     leaflet() %>% 
       addProviderTiles(providers$Stamen.TonerLite, options = tileOptions(opacity = 0.5)) %>% 
-      fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]]) %>% 
-      # addPolygons(group = "Overall",
-      #             data = hotels_aggr_all[[1]],
-      #             stroke = F,
-      #             fillColor = ~pal_reviews(reviews.average),
-      #             fillOpacity = 0.8,
-      #             label = ~format(reviews.average, digits = 3),
-      #             labelOptions = labelOptions()) %>% 
+      fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]]) %>%
+      addMapPane("grid_polys", zIndex = 300) %>% 
+      addPolygons(group = "grid",
+                  data = hotels_aggr_all[[1]],
+                  stroke = T,
+                  weight = 2,
+                  color = "gray",
+                  opacity = 1,
+                  fillOpacity = 0,
+                  options = pathOptions(pane = "grid_polys")) %>%
       addPolylines(group = "lines",
                    data = lines_sf,
                    stroke = 2,
@@ -217,7 +216,12 @@ server = function(input, output) {
                        stroke = F,
                        fillColor = "Black",
                        fillOpacity = 1,
-                       radius = 3)
+                       radius = 3) %>% 
+      addLabelOnlyMarkers(group = "stations",
+                          data = labels_sf,
+                          label = ~name_en,
+                          labelOptions = labelOptions(noHide = T, direction = "top", textOnly = T)) 
+    
   })
   
   output$map_detail = renderText({
@@ -246,6 +250,7 @@ server = function(input, output) {
                      pretty = T)
       
       leafletProxy("map", data = hotels_aggr_all[[1]]) %>% 
+        hideGroup(c("SLDA", "Differences", "UBA", "GWR", "GWR_pval")) %>% 
         showGroup("Overall") %>% 
         clearGroup("Overall") %>% 
         clearControls() %>%
@@ -477,6 +482,17 @@ server = function(input, output) {
     }else{
       leafletProxy("map") %>%
         hideGroup("stations")
+    }
+  })
+  
+  # Toggle Grid
+  observe({
+    if(input$grid){
+      leafletProxy("map") %>% 
+        showGroup("grid")
+    }else{
+      leafletProxy("map") %>% 
+        hideGroup("grid")
     }
   })
 }
