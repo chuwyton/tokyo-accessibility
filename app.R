@@ -4,10 +4,12 @@
 # Libraries
 library(shiny)
 library(shinyjs)
+library(shinythemes)
 library(tidyverse)
 library(sf)
 library(spgwr)
 library(leaflet)
+# library(lazyeval)
 
 # Data
 print("Getting data")
@@ -185,17 +187,17 @@ server = function(input, output) {
     leaflet() %>% 
       addProviderTiles(providers$Stamen.TonerLite, options = tileOptions(opacity = 0.5)) %>% 
       fitBounds(bbox[[1]], bbox[[2]], bbox[[3]], bbox[[4]]) %>% 
-      addPolygons(group = "Overall",
-                  data = hotels_aggr_all[[1]],
-                  stroke = F,
-                  fillColor = ~pal_reviews(reviews.average),
-                  fillOpacity = 0.8,
-                  label = ~format(reviews.average, digits = 3),
-                  labelOptions = labelOptions()) %>% 
-      # addPolylines(group = "lines",
-      #              data = lines_sf,
-      #              stroke = 2,
-      #              color = ~col) %>% 
+      # addPolygons(group = "Overall",
+      #             data = hotels_aggr_all[[1]],
+      #             stroke = F,
+      #             fillColor = ~pal_reviews(reviews.average),
+      #             fillOpacity = 0.8,
+      #             label = ~format(reviews.average, digits = 3),
+      #             labelOptions = labelOptions()) %>% 
+      addPolylines(group = "lines",
+                   data = lines_sf,
+                   stroke = 2,
+                   color = ~col) %>%
       addCircleMarkers(group = "destinations",
                        data = destinations_sf,
                        stroke = F,
@@ -226,14 +228,12 @@ server = function(input, output) {
                       variab == "Trip Fare" ~ "fare.avg",
                       variab == "Trip Transfers" ~ "transfers.avg")
       col = hotels_aggr_all[[1]][[var]]
-      print(range(col))
       pal = colorBin(palette = "Blues", 
                      domain = range(col), 
                      bins = 6,
                      pretty = T)
       
       leafletProxy("map", data = hotels_aggr_all[[1]]) %>% 
-        hideGroup(c("SLDA", "Differences", "UBA", "GWR")) %>% 
         showGroup("Overall") %>% 
         clearGroup("Overall") %>% 
         clearControls() %>%
@@ -252,7 +252,7 @@ server = function(input, output) {
     }
     if(input$selectedTab == "duration"){
       leafletProxy("map", data = hotels_aggr_all[[input$slider_shortDest]]) %>% 
-        hideGroup(c("Overall", "GWR")) %>% 
+        hideGroup(c("Overall", "GWR", "GWR_pval")) %>% 
         clearControls()
       
       if(isolate({input$select_duration_type}) == "SLDA"){
@@ -289,10 +289,11 @@ server = function(input, output) {
     if(input$selectedTab == "gwr"){
       redrawGWR(isolate({input$slider_shortDest}), 
                 isolate({input$select_factor_gwr}),
-                isolate({input$selectedTab}))
+                isolate({input$selectedTab}),
+                isolate({input$slider_pval}))
       leafletProxy("map") %>% 
         hideGroup(c("Overall", "SLDA", "Differences", "UBA")) %>% 
-        showGroup("GWR")
+        showGroup(c("GWR", "GWR_pval"))
     }
     
     toggle("slider_shortDest", condition = input$selectedTab %in% c("duration", "gwr"))
@@ -368,7 +369,8 @@ server = function(input, output) {
       ### GWR
       redrawGWR(isolate({input$slider_shortDest}), 
                 isolate({input$select_factor_gwr}),
-                isolate({input$selectedTab}))
+                isolate({input$selectedTab}),
+                isolate({input$slider_pval}))
     }
   })
   
@@ -420,7 +422,17 @@ server = function(input, output) {
   observe({
     redrawGWR(isolate({input$slider_shortDest}), 
               input$select_factor_gwr,
-              isolate({input$selectedTab}))
+              isolate({input$selectedTab}),
+              isolate({input$slider_pval}))
+  })
+  
+  # Change in GWR pval cutoff
+  observe({
+    input$slider_pval
+    redrawGWR(isolate({input$slider_shortDest}),
+              isolate({input$select_factor_gwr}),
+              isolate({input$selectedTab}),
+              input$slider_pval)
   })
   
   # Toggle lines
@@ -490,7 +502,6 @@ redrawGWR = function(shortDest, variab, selectedTab, pval) {
                 label = format(col, digits = 3),
                 labelOptions = labelOptions())
   
-  
   # If gwr is the selected tab, draw legend
   if(selectedTab == "gwr"){
     leafletProxy("map") %>% 
@@ -500,8 +511,34 @@ redrawGWR = function(shortDest, variab, selectedTab, pval) {
                 pal = pal_gwr,
                 values = col,
                 labFormat = labelFormat(digits = sig))
+  
+    # pval grey out
+    pval = pval/100
+    var_pval = case_when(variab == "Room Rates" ~ "price.lead.pval",
+                         variab == "Star Rating" ~ "star.pval",
+                         variab == "Room Rates * Star Rating" ~ "price.lead.average.star.pval",
+                         variab == "Trip Duration" ~ "duration.pval",
+                         variab == "Trip Fare" ~ "fare.pval",
+                         variab == "Trip Transfers" ~ "transfers.pval") 
+    print(pval)
+    if(pval > 0){
+      data_pval = data %>% 
+        filter((!!as.name(var_pval)) > pval)
+      
+      print(nrow(data_pval))
+      
+      leafletProxy("map", data = data_pval) %>% 
+        clearGroup("GWR_pval") %>% 
+        addPolygons(group = "GWR_pval",
+                    stroke = F,
+                    fillColor = "dimgray",
+                    fillOpacity = 0.5)
+    } else {
+      leafletProxy("map") %>% 
+        clearGroup("GWR_pval")
+    }
   }else{
-    leafletProxy("map") %>% hideGroup("GWR")
+    leafletProxy("map") %>% hideGroup("GWR") %>% clearGroup("GWR_pval")
   }
 }
 
