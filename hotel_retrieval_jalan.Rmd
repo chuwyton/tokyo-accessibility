@@ -93,7 +93,7 @@ get_hotels = function(path) {
   return(test_tibble)
 }
 
-# tb = get_hotels("data/Hotels/Expedia_hotels_150.json")
+# This code expects all the jsons 
 
 assumedLocation = here::here("data/Hotels/Expedia_hotels.zip")
 if(file.exists(assumedLocation)){

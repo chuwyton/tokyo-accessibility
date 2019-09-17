@@ -1,0 +1,74 @@
+---
+title: "Hotel Data Retrieval via jalan.net"
+output: html_notebook
+---
+
+This notebook details the process of getting hotel attribute data from jalan.net.  
+In the end, jalan.net data was not used for the thesis, but its numerous fields may come in useful for other research in the future.
+
+An API key is needed to access jalan.net data, which, as of sometime June 2019, is free to get.
+
+```{r Get hotels, eval=F, include=F}
+get_hotels = function(path) {
+  test = read_json(path)$hotels %>% keep(~.x$type == "HotelViewModel")
+  test_tibble = tibble(hotelId = map(test, "hotelId") %>% unlist(),
+                       hotelName = map(test, "hotelName") %>% unlist(),
+                       #shortlistModel = map(test, "shortlistModel"),
+                       displayPrice = map(test, "displayPrice") %>% unlist(),
+                       latitude = map(test, "latitude") %>% unlist(),
+                       longitude = map(test, "longitude") %>% unlist(),
+                       hotelFlags = map(test, "hotelFlags"),
+                       price = map(test, "price"),
+                       neighborhood = map(test, "neighborhood") %>% unlist(),
+                       reviews = map(test, "reviews"),
+                       resultType = map(test, "resultType") %>% unlist(),
+                       comparisonModel = map(test, "comparisonModel")) %>% 
+    drop_na() %>% 
+    mutate(price.lead = map(price, "lead") %>% unlist(),
+           price.strikeout = map(price, "strikeOut", .default = NA_character_) %>% unlist(),
+           reviews.localizedOverallRating = map(reviews, "localizedOverallRating") %>% unlist(),
+           reviews.localizedCount = map(reviews, "localizedCount") %>% unlist(),
+           reviews.superlative = map(reviews, "superlative", .default = NA_character_) %>% unlist(),
+           comparisonModel.amenities = map(comparisonModel, "amenities"),
+           comparisonModel.starRating = map(comparisonModel, "starRating") %>% unlist()) %>% 
+    mutate(displayPrice = parse_number(displayPrice),
+           latitude = parse_number(latitude),
+           longitude = parse_number(longitude),
+           price.lead = parse_number(price.lead),
+           price.strikeout = parse_number(price.strikeout),
+           reviews.localizedOverallRating = parse_number(reviews.localizedOverallRating),
+           reviews.localizedCount = parse_number(reviews.localizedCount),
+           reviews.superlative = parse_factor(reviews.superlative,
+                                              levels = c(NA_character_, "Good", "Very Good", "Excellent", "Wonderful", "Exceptional"),
+                                              ordered = T)) %>% 
+    mutate(price.strikeout = if_else(is.na(price.strikeout), price.lead, price.strikeout)) %>% 
+    select(hotelId, 
+           hotelName, 
+           neighborhood, 
+           price.lead, 
+           price.strikeout,
+           reviews.superlative,
+           reviews.localizedOverallRating,
+           reviews.localizedCount,
+           comparisonModel.starRating,
+           latitude,
+           longitude,
+           hotelFlags, 
+           comparisonModel.amenities,
+           comparisonModel)
+
+  return(test_tibble)
+}
+
+# This code expects all the jsons 
+
+assumedLocation = here::here("data/Hotels/Expedia_hotels.zip")
+if(file.exists(assumedLocation)){
+  local_path = assumedLocation
+} else {
+  local_path = choose.files(default = here::here(), caption = "Select zip folder containing Expedia hotel jsons", multi = F)
+}
+
+local_path %>% unzip(exdir = here::here("data/Hotels/Expedia_hotels"))
+hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.json", full.names = T) %>% map(get_hotels) %>% bind_rows()
+```
