@@ -8,6 +8,12 @@ editor_options:
 This notebook details the process of getting hotel attribute data from jalan.net.  
 In the end, jalan.net data was not used for the thesis, but its numerous fields may come in useful for other research in the future.
 
+```{r Setup, include=F}
+library(tidyverse)
+library(httr)
+```
+
+
 An API key is needed to access jalan.net data, which, as of sometime June 2019, is free to get.
 
 The search condition for the API is one night, one room.
