@@ -3,6 +3,7 @@ title: "Explore MLIT attraction data"
 output: html_notebook
 ---
 This file is to explore what's up with the MLIT attraction data, and whether it fits our usage.
+The conclusion is that it doesn't, but this will be left here for other people who might find it useful.
 
 
 ```{r Load libraries}
@@ -22,7 +23,7 @@ tmap_mode("view")
 
 ```{r Load data}
 ksjSummary = getKSJSummary()
-#p12 観光資源
+#p12 観光資源 (tl: Tourist resources)
 #Sys.setlocale("LC_CTYPE", oldLocale)
 ksjUrl = getKSJURL(identifier = "P12", prefCode = 13)
 
@@ -30,6 +31,7 @@ ksjUrl = getKSJURL(identifier = "P12", prefCode = 13)
 tokyo_admin = kokudosuuchi::KSJMetadata_code_correspondence_tables$AdminAreaCd.html %>% 
   as_tibble(rownames = "id") %>% 
   filter(str_detect(value, "東京都"))
+
 #use jap locale to view... Tokyo wards is 131xx
 
 attractions = getKSJData(ksjUrl$zipFileUrl, cache_dir = "data/")
@@ -86,32 +88,7 @@ attractions_points = attractions$`P12a-14_13` %>%
 tm_shape(attractions_points) + tm_dots("P12_005e", size=0.75, alpha = 0.7)
 
 #Sys.setlocale("LC_CTYPE", "JA")
-
 ```
 
-
-```{r Import Yamanote Line}
-q = getbb("Tokyo") %>%
-  opq() %>%
-  add_osm_feature("route", "train") %>%
-  add_osm_feature("name:en", "JR Yamanote Line (Outer)")
-
-yamanote = osmdata_sf(q)
-yamanote_area = yamanote$osm_lines %>%
-  st_union() %>% 
-  st_convex_hull()
-yamanote_area_grid = yamanote_area %>% 
-  st_make_grid(st_bbox(.), square = F, cellsize = 0.004) 
-tm_shape(yamanote_area_grid) + tm_polygons()
-
-tm_shape(yamanote_area) + 
-  tm_polygons(col = "red", alpha = 0.4) +
-  tm_shape(attractions_points) + 
-  tm_dots("P12_005e", size=0.2, alpha = 0.9)
-```
-
-```{r calculate shortest paths}
-
-```
 
 
