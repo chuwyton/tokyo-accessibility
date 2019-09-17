@@ -1,6 +1,8 @@
 ---
 title: "Hotel Data Retrieval via jalan.net"
 output: html_notebook
+editor_options: 
+  chunk_output_type: inline
 ---
 
 This notebook details the process of getting hotel attribute data from jalan.net.  
@@ -8,67 +10,116 @@ In the end, jalan.net data was not used for the thesis, but its numerous fields 
 
 An API key is needed to access jalan.net data, which, as of sometime June 2019, is free to get.
 
-```{r Get hotels, eval=F, include=F}
-get_hotels = function(path) {
-  test = read_json(path)$hotels %>% keep(~.x$type == "HotelViewModel")
-  test_tibble = tibble(hotelId = map(test, "hotelId") %>% unlist(),
-                       hotelName = map(test, "hotelName") %>% unlist(),
-                       #shortlistModel = map(test, "shortlistModel"),
-                       displayPrice = map(test, "displayPrice") %>% unlist(),
-                       latitude = map(test, "latitude") %>% unlist(),
-                       longitude = map(test, "longitude") %>% unlist(),
-                       hotelFlags = map(test, "hotelFlags"),
-                       price = map(test, "price"),
-                       neighborhood = map(test, "neighborhood") %>% unlist(),
-                       reviews = map(test, "reviews"),
-                       resultType = map(test, "resultType") %>% unlist(),
-                       comparisonModel = map(test, "comparisonModel")) %>% 
-    drop_na() %>% 
-    mutate(price.lead = map(price, "lead") %>% unlist(),
-           price.strikeout = map(price, "strikeOut", .default = NA_character_) %>% unlist(),
-           reviews.localizedOverallRating = map(reviews, "localizedOverallRating") %>% unlist(),
-           reviews.localizedCount = map(reviews, "localizedCount") %>% unlist(),
-           reviews.superlative = map(reviews, "superlative", .default = NA_character_) %>% unlist(),
-           comparisonModel.amenities = map(comparisonModel, "amenities"),
-           comparisonModel.starRating = map(comparisonModel, "starRating") %>% unlist()) %>% 
-    mutate(displayPrice = parse_number(displayPrice),
-           latitude = parse_number(latitude),
-           longitude = parse_number(longitude),
-           price.lead = parse_number(price.lead),
-           price.strikeout = parse_number(price.strikeout),
-           reviews.localizedOverallRating = parse_number(reviews.localizedOverallRating),
-           reviews.localizedCount = parse_number(reviews.localizedCount),
-           reviews.superlative = parse_factor(reviews.superlative,
-                                              levels = c(NA_character_, "Good", "Very Good", "Excellent", "Wonderful", "Exceptional"),
-                                              ordered = T)) %>% 
-    mutate(price.strikeout = if_else(is.na(price.strikeout), price.lead, price.strikeout)) %>% 
-    select(hotelId, 
-           hotelName, 
-           neighborhood, 
-           price.lead, 
-           price.strikeout,
-           reviews.superlative,
-           reviews.localizedOverallRating,
-           reviews.localizedCount,
-           comparisonModel.starRating,
-           latitude,
-           longitude,
-           hotelFlags, 
-           comparisonModel.amenities,
-           comparisonModel)
-
+```{r Get hotels jalan.net, eval=F}
+get_hotels_jalan = function(start, count) {
+  if(exists("pb")) pb$tick()$print()
+  jalan_url = "http://jws.jalan.net/"
+  jalan_path= "APIAdvance/HotelSearch/V1/"
+  jalan_query = list(key     = jalan_apikey,
+                     pref    = 130000,
+                     start   = start,
+                     count   = count,
+                     xml_ptn = 2)
+  
+  jalan_response = GET(jalan_url, path = jalan_path, query = jalan_query)
+  jalan_hotels = jalan_response %>% 
+    content() %>% 
+    as_list()
+  
+  test = jalan_hotels$Results[names(jalan_hotels$Results) == "Hotel"]
+  test_tibble = tibble(HotelID = test %>% map("HotelID") %>% unlist,
+         HotelName = test %>% map("HotelName") %>% unlist,
+         SmallArea = test %>% map(c("Area", "SmallArea")) %>% unlist,
+         HotelType = test %>% map("HotelType") %>% unlist,
+         Hotel.CheckInTime = test %>% map("CheckInTime") %>% unlist,
+         Hotel.CheckOutTime = test %>% map("CheckOutTime") %>% unlist,
+         X.millisecs = test %>% map("X") %>% unlist,
+         Y.millisecs = test %>% map("Y") %>% unlist,
+         LowestRate = test %>% map("SampleRateFrom") %>% unlist,
+         NumberOfRatings = test %>% map("NumberOfRatings") %>% unlist,
+         Rating = test %>% map("Rating", .default = NA_character_) %>% unlist,
+         Plans = test %>% map("Plan")) %>% 
+    mutate(HotelID = as.integer(HotelID),
+           longitude = as.double(X.millisecs)/3600000,
+           latitude = as.double(Y.millisecs)/3600000,
+           LowestRate = as.integer(LowestRate),
+           NumberOfRatings = as.integer(NumberOfRatings, na.rm = F),
+           Rating = as.integer(Rating, na.rm=F))
+  
   return(test_tibble)
 }
 
-# This code expects all the jsons 
+#Sample query -- get number of responses
+jalan_response_number = GET("http://jws.jalan.net/",
+                            path = "APIAdvance/HotelSearch/V1/",
+                            query = list(key     = jalan_apikey,
+                                         pref    = 130000,
+                                         count   = 1,
+                                         xml_ptn = 2)) %>%
+  content() %>% 
+  as_list() %>% 
+  `[[`("Results") %>% 
+  `[[`("NumberOfResults") %>% 
+  as.integer()
 
-assumedLocation = here::here("data/Hotels/Expedia_hotels.zip")
-if(file.exists(assumedLocation)){
-  local_path = assumedLocation
-} else {
-  local_path = choose.files(default = here::here(), caption = "Select zip folder containing Expedia hotel jsons", multi = F)
-}
+start = seq(from = 1, to = jalan_response_number, by = 100)
+count = 100
+pb = progress_estimated(length(start), 5)
 
-local_path %>% unzip(exdir = here::here("data/Hotels/Expedia_hotels"))
-hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.json", full.names = T) %>% map(get_hotels) %>% bind_rows()
+jalan_hotels = pmap_dfr(list(start = start,
+                             count = count),
+                             get_hotels_jalan)
+pb$stop()
+
+jalan_small_area = jalan_hotels$SmallArea %>% unique() %>% sort()
+jalan_small_area_enum = c("Odaiba|Shiodome|Takeshiba",
+                          "Ochanomizu|Yushima|Hongo",
+                          "Ueno",
+                          "Setagaya",
+                          "Nakano|Suginami",
+                          "Kudan|Yotsuya|Korakuen",
+                          "Izu Is.|Ogasawara",
+                          "Roppongi|Azabu|Toranomon",
+                          "Kichijoji|Mitaka|Musashino",
+                          "Shinagawa|Takanawa|Tennozu",
+                          "Sumida|Ryogoku",
+                          "Otsuka|Bunkyo",
+                          "Oku-Tama",
+                          "Ebisu|Meguro|Gotanda",
+                          "Shinjuku",
+                          "Shimbashi|Shiba",
+                          "Tokyo|Kanda|Nihombashi",
+                          "Itabashi|Akabane",
+                          "Koto",
+                          "Ikebukuro",
+                          "Asakusa",
+                          "Shibuya",
+                          "Machida",
+                          "Shirogane",
+                          "Fussa|Higashi-Murayama|Koganei",
+                          "Tachikawa|Hachioji|Tama",
+                          "Arakawa|Adachi",
+                          "Katsushika|Edogawa",
+                          "Kamata|Omori|Haneda",
+                          "Chofu|Fuchu",
+                          "Akasaka|Tameike",
+                          "Ginza|Aomi|Tsukiji",
+                          "Aoyama",
+                          "Ome")
+jalan_hotel_type = jalan_hotels$HotelType %>% unique() %>% sort()
+jalan_hotel_type_enum = c("Condominium",
+                          "Pension",
+                          "Hotel",
+                          "Youth Hostel",
+                          "Lodge",
+                          "Ryokan",
+                          "Minshuku",
+                          "Vacation rental")
+
+jalan_hotels = jalan_hotels %>% mutate(Hotel.CheckInTime = as_datetime(str_glue("1970-01-01 {Hotel.CheckInTime}:00")),
+                                Hotel.CheckOutTime = as_datetime(str_glue("1970-01-01 {Hotel.CheckOutTime}:00")),
+                                SmallArea_English = jalan_small_area_enum[SmallArea %>% match(jalan_small_area)],
+                                HotelType_English = jalan_hotel_type_enum[HotelType %>% match(jalan_hotel_type)])
+
+write_rds(jalan_hotels, here::here("data/jalan_hotels.rds"))
 ```
