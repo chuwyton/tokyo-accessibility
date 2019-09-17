@@ -5,7 +5,7 @@ output: html_notebook
 
 This notebook details the retrieval of hotel and destination data from Expedia. The actual collection of data was mostly scraped externally (by listening in Network for a response file in Chrome's Developer tools). Other web scrapers may be used, but should take note that the response should be a JSON object format.
 
-In this case, the response was recorded for each new batch of 50 hotels when the "See More" button was clicked on a search query for hotels in Tokyo, then their responses copied into a text editor, saved as .json files, and all collated in a folder called data/Hotels.
+In this case, the response was recorded for each new batch of 50 hotels when the "See More" button was clicked on a search query for hotels in Tokyo, then their responses copied into a text editor, saved as .json files, and all collated in a zipped folder. The default path to look at is /data/Hotels/Expedia_hotels.zip
 
 The code below will extract information from all these files and turn them into tibbles for easy usage.
 
@@ -76,3 +76,35 @@ hotels = here::here("data/Hotels/Expedia_hotels") %>% list.files(pattern = "*.js
 write_rds(hotels, here::here("data/hotels.rds"))
 ```
 
+```{r Expedia destinations}
+destinations = here::here("data/Hotels/Expedia_hotels") %>% 
+  list.files(pattern = "*.json", full.names = T) %>%
+  map(read_json) %>% 
+  map(c("sortAndFilter", "options", "poi", "options")) %>% 
+  unlist(recursive = F) %>%  
+  map(as_tibble) %>% 
+  bind_rows() %>% 
+  separate(value, sep = ":", into = c("value", "extrainfo")) %>% 
+  separate(value, sep = ",", into = c("latitude", "longitude")) %>% 
+  select(-selected) %>% 
+  mutate_at(.vars = 2:4, .funs = as.numeric) %>% 
+  distinct()
+
+#so far, iterating over all json responses gives the same 20 destinations. Perhaps they are classified by city.
+
+destinations_sf = destinations %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 6668) %>%
+  st_transform(6677)
+
+## Tmap is needed for displaying this
+# destinations_sf %>% mutate(colour = case_when(label == "Sensō-ji Temple" ~ "goldenrod1",
+#                                               label == "Asakusa Shrine" ~ "goldenrod1",
+#                                               TRUE ~ "maroon")) %>% 
+#   tm_shape() +
+#   tm_dots(col = "colour") +
+#   tm_basemap(server = "OpenStreetMap", alpha = 0.3) +
+#   tm_layout(title = "Expedia Destinations")
+
+write_rds(destinations, here::here("data/destinations.rds"))
+write_rds(destinations_sf, here::here("data/destinations_sd.rds"))
+```
