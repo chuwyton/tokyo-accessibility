@@ -10,6 +10,8 @@ In the end, jalan.net data was not used for the thesis, but its numerous fields 
 
 An API key is needed to access jalan.net data, which, as of sometime June 2019, is free to get.
 
+The search condition for the API is one night, one room.
+
 ```{r Get hotels jalan.net, eval=F}
 get_hotels_jalan = function(start, count) {
   if(exists("pb")) pb$tick()$print()
