@@ -1,0 +1,246 @@
+---
+title: "Data Retrieval: OTP"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+This is a notebook for retrieving and calculating datasets pertaining to the use of OpenTripPlanner (OTP).
+
+```{r Setup}
+library(tidyverse)
+library(sf)
+library(opentripplanner)
+```
+
+```{r Closest stations}
+# load grid dataset
+yamanote_area_grid = read_rds(here::here("data/yamanote_area_grid.rds"))
+
+# A note about Coordinate Reference Systems: usually 6677 (Tokyo) is used but for OTP interfacing we will use 4326. Just in case the interpreter doesn't know and takes 6677 coordinates literally. (4326 is latlong so should be fine.)
+
+# centroids
+yamanote_grid_centroids = yamanote_area_grid %>% 
+  st_centroid() %>% 
+  st_transform(4326)
+
+# stations (from stops.txt from Kuranowski's TokyoGTFS repo)
+stations = read_csv(here::here("data/stops.txt")) %>% 
+  st_as_sf(crs = 4326, coords = c("stop_lon", "stop_lat")) %>% 
+  filter(!(location_type == 0 & !is.na(parent_station)))
+
+# get only the pairs we want to check (anything within 1500m of each other)
+distmat = st_distance(yamanote_grid_centroids, stations)                # generate distance matrix
+chkidxs = which(distmat < units::as_units(1500, "meters"), arr.ind = T) #get the index pairs we want to check
+
+# OTP
+otpcon = otp_connect()
+response = otp_plan(otpcon = otpcon,
+                    fromPlace = yamanote_grid_centroids %>% slice(chkidxs[,1]),
+                    toPlace = stations %>% slice(chkidxs[,2]),
+                    fromID = yamanote_grid_centroids[["grid.id"]][chkidxs[,1]] %>% as.character(),
+                    toID = stations[["stop_id"]][chkidxs[,2]],
+                    mode = "WALK",
+                    maxWalkDistance = 1500,
+                    walkReluctance = 0,
+                    numItineraries = 1,
+                    get_geometry = F,
+                    ncores = 2)
+
+# Note: there will be a few errors -- most of these come from having fromPlace no. 243, which is in the imperial palace
+
+nearest_stations = response %>% 
+  as_tibble() %>% 
+  select(gridId = fromPlace, station = toPlace, walkDistance) %>% 
+  nest(station, walkDistance, .key = "nearestStations")
+
+# write data to file
+jsonlite::write_json(nearest_stations, here::here("data/nearest_stations.json"))
+```
+
+```{r Station-to-station matrix}
+# grid (for filtering station data)
+yamanote_area_grid = read_rds(here::here("data/yamanote_area_grid.rds"))
+inclusion_area = yamanote_area_grid %>% 
+  st_transform(6677) %>% 
+  st_union() %>% 
+  st_buffer(1000)
+
+# stations (from stops.txt from Kuranowski's TokyoGTFS repo)
+# include only stations at most 1km from the grids
+# note: intersection operation should be done with a planar crs, that's why we convert to 6677 (Tokyo) first
+stations = read_csv(here::here("data/stops.txt")) %>% 
+  st_as_sf(crs = 4326, coords = c("stop_lon", "stop_lat")) %>% 
+  st_transform(6677) %>% 
+  filter(!(location_type == 0 & !is.na(parent_station))) %>% 
+  st_intersection(inclusion_area) %>% 
+  st_transform(4326)
+
+fromPlace = stations %>% slice(rep(1:n(), times = nrow(.)))
+toPlace = stations %>% slice(rep(1:n(), each = nrow(.)))
+fromID = fromPlace$stop_id
+toID = toPlace$stop_id
+
+# OTP
+otpcon = otp_connect()
+response = otp_plan(otpcon = otpcon,
+                    fromPlace = fromPlace,
+                    toPlace = toPlace,
+                    fromID = fromID,
+                    toID = toID,
+                    mode = c("WALK", "TRANSIT"),
+                    date_time = as.POSIXct("2019-10-21 18:00"),
+                    maxWalkDistance = 1500,
+                    numItineraries = 1,
+                    get_geometry = F,
+                    ncores = 2)
+
+# For some reason Nippori station doesn't want to work properly. Set a special
+# coordinate and recalculate, then add to the existing dataset
+nippori = stations %>% 
+  filter(stop_id == "Merged.Nippori") %>% 
+  st_set_geometry(st_sfc(st_point(c(139.77149, 35.72807))))
+
+response_nippori = otp_plan(otpcon = otpcon,
+                            fromPlace = nippori %>% slice(rep(1, times = nrow(stations))),
+                            toPlace = stations,
+                            fromID = nippori$stop_id %>% rep(times = nrow(stations)),
+                            toID = stations$stop_id,
+                            mode = c("WALK", "TRANSIT"),
+                            date_time = as.POSIXct("2019-10-21 18:00"),
+                            maxWalkDistance = 1500,
+                            numItineraries = 1,
+                            get_geometry = F,
+                            ncores = 2) %>% 
+  group_by(fromPlace, toPlace) %>%  # Remove walking leg to Nippori (because of moved node)
+  mutate(leg = 1:n(), legs = n()) %>% 
+  filter(!(leg == 1 & fromPlace == "Merged.Nippori" & round(distance) == 185)) %>% 
+  mutate(walkTime = sum(duration1 * !transitLeg),
+         walkDistance = sum(distance * !transitLeg)) %>% 
+  ungroup() %>% 
+  select(-leg, -legs)
+
+# Combine
+response = bind_rows(response, response_nippori)
+
+# Get the opposite way also
+response_nippori = otp_plan(otpcon = otpcon,
+                            fromPlace = stations,
+                            toPlace = nippori %>% slice(rep(1, times = nrow(stations))),
+                            fromID = stations$stop_id,
+                            toID = nippori$stop_id %>% rep(times = nrow(stations)),
+                            mode = c("WALK", "TRANSIT"),
+                            date_time = as.POSIXct("2019-10-21 18:00"),
+                            maxWalkDistance = 1500,
+                            numItineraries = 1,
+                            get_geometry = F,
+                            ncores = 2) %>% 
+  group_by(fromPlace, toPlace) %>%  # Remove walking leg to Nippori (because of moved node)
+  mutate(leg = 1:n(), legs = n()) %>% 
+  filter(!(leg == legs & toPlace == "Merged.Nippori" & round(distance) == 185)) %>%
+  mutate(walkTime = sum(duration1 * !transitLeg),
+         walkDistance = sum(distance * !transitLeg)) %>% 
+  ungroup() %>% 
+  select(-leg, -legs)
+
+# Combine
+response = bind_rows(response, response_nippori)
+
+response %>% 
+  group_by(fromPlace, toPlace) %>%
+  select(duration, walkTime, transitTime, waitingTime, walkDistance) %>%  
+  summarise_all(first)
+```
+
+```{r Take away first/last walking leg for Nippori}
+# There is no need to do this if the section above works
+response_nippori = response %>% filter(fromPlace == "Merged.Nippori" |
+                                       toPlace   == "Merged.Nippori")
+
+response_nippori = response_nippori %>%  
+  group_by(fromPlace, toPlace) %>% 
+  mutate(leg = 1:n()) %>% 
+  mutate(legs = max(leg)) %>% 
+  ungroup() %>% 
+  filter(!((leg == 1 & fromPlace == "Merged.Nippori")|(leg == legs & toPlace == "Merged.Nippori") & 
+             round(distance) == 185)) %>% 
+  select(-leg, -legs)
+
+response_nippori = response_nippori %>% 
+  group_by(fromPlace, toPlace) %>% 
+  mutate(walkTime = sum(duration1 * !transitLeg),
+         walkDistance = sum(distance * !transitLeg))
+
+  
+response = response %>% filter(fromPlace != "Merged.Nippori", toPlace != "Merged.Nippori") %>% 
+  bind_rows(response_nippori)
+```
+
+```{r Correct values which are too small}
+# Some values are impossibly small (eg. duration = 2 seconds?!) and
+# this is caused by the minute-fidelity nature of the transitTime column.
+# for trips which depart and arrive in the same minute, transitTime can
+# be written as 0s. Therefore, for all transitTime < 30 we will replace with
+# a minimum of 30.
+
+response = response %>%
+  mutate(transitTime = if_else(transitTime < 30, 30, as.double(transitTime)),
+         duration = walkTime + transitTime + waitingTime)
+```
+
+```{r Convert station-to-station to matrix}
+station_idx = stations %>% 
+  st_set_geometry(NULL) %>% 
+  select(stop_id) %>% 
+  mutate(id = 1:n())
+
+response_idx = response %>% 
+  left_join(station_idx, by = c("fromPlace" = "stop_id")) %>% 
+  rename(fromID = id) %>% 
+  left_join(station_idx, by = c("toPlace" = "stop_id")) %>% 
+  rename(toID = id)
+
+# Prepare empty matrix
+mat_station_od_empty = matrix(nrow = nrow(station_idx), ncol = nrow(station_idx))
+
+# Durations
+mat_station_od_durations = mat_station_od_empty
+mat_station_od_durations[cbind(response_idx$fromID, response_idx$toID)] = response_idx$duration
+mat_station_od_durations = replace_na(mat_station_od_durations, 0)
+
+# Walking distance
+mat_station_od_walkdistance = mat_station_od_empty
+mat_station_od_walkdistance[cbind(response_idx$fromID, response_idx$toID)] = response_idx$walkDistance
+mat_station_od_walkdistance = replace_na(mat_station_od_walkdistance, 0)
+
+# Transfers
+mat_station_od_transfers = mat_station_od_empty
+mat_station_od_transfers[cbind(response_idx$fromID, response_idx$toID)] = response_idx$transfers
+mat_station_od_transfers = replace_na(mat_station_od_transfers, 0)
+
+# Write everything
+mat_station_od = list("durations" = mat_station_od_durations,
+                      "walkDistance" = mat_station_od_walkdistance,
+                      "transfers" = mat_station_od_transfers)
+jsonlite::write_json(mat_station_od, here::here("data/mat_station_od.json"))
+```
+
+```{r Convert grid-center-to-station to matrix}
+nearest_stations_idx = nearest_stations %>% 
+  unnest() %>% 
+  left_join(station_idx, by = c("station" = "stop_id")) %>% 
+  mutate(gridId = as.integer(gridId)) %>% 
+  na.omit()
+
+mat_grid_to_station_empty = matrix(nrow = max(nearest_stations_idx$gridId), ncol = nrow(station_idx))
+mat_grid_to_station = mat_grid_to_station_empty
+mat_grid_to_station[cbind(nearest_stations_idx$gridId, nearest_stations_idx$id)] = nearest_stations_idx$walkDistance
+
+# If outside of the 1500 bounds, it will return as NA. Replace them with an incredulously large number
+# Like 100000 (nobody walks 100km to the nearest station)
+mat_grid_to_station = mat_grid_to_station %>% replace_na(100000)
+
+# Write
+jsonlite::write_json(mat_grid_to_station, here::here("data/mat_grid_to_station.json"))
+```
+
